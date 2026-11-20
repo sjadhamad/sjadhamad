@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>مدرّب إعادة الشموع — EUR/USD</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f172a'/%3E%3Cpath d='M9 9v14M9 12h4v8H9zM21 7v18M19 11h4v9h-4z' stroke='%2338bdf8' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-app-state="idle">
+  <div class="app-shell">
+    <!-- Region 1: Top Bar -->
+    <header class="top-bar" role="banner">
+      <div class="top-bar__group top-bar__brand-group">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M8 6.5v11M6.5 9.5h3v5h-3z" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 5.5v13M14.5 8.5h3v6.5h-3z" stroke="#ef4444" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="symbol-block">
+          <span class="symbol-block__title">مدرّب إعادة الشموع</span>
+          <div class="symbol-block__row">
+            <bdi id="symbol-label" class="num symbol-code" dir="ltr">EURUSD</bdi>
+            <span class="quote-chip quote-chip--bid" title="سعر العرض (Bid)">
+              <span class="quote-chip__lbl">عرض</span>
+              <bdi id="top-bid" class="num" dir="ltr">—</bdi>
+            </span>
+            <span class="quote-chip quote-chip--ask" title="سعر الطلب (Ask)">
+              <span class="quote-chip__lbl">طلب</span>
+              <bdi id="top-ask" class="num" dir="ltr">—</bdi>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="top-bar__group tf-bar" aria-label="الأطر الزمنية">
+        <span class="tf-bar__label">الإطار:</span>
+        <div id="tf-pills" class="tf-pills" role="group" aria-label="اختيار الإطار الزمني">
+          <button type="button" class="tf-pill" data-tf="M1"><bdi class="num" dir="ltr">M1</bdi></button>
+          <button type="button" class="tf-pill is-active" data-tf="M5"><bdi class="num" dir="ltr">M5</bdi></button>
+          <button type="button" class="tf-pill" data-tf="M15"><bdi class="num" dir="ltr">M15</bdi></button>
+          <button type="button" class="tf-pill" data-tf="H1"><bdi class="num" dir="ltr">H1</bdi></button>
+          <button type="button" class="tf-pill" data-tf="H4"><bdi class="num" dir="ltr">H4</bdi></button>
+          <button type="button" class="tf-pill" data-tf="D1"><bdi class="num" dir="ltr">D1</bdi></button>
+        </div>
+      </nav>
+
+      <div class="top-bar__group clock-group">
+        <div class="clock-box" title="توقيت مؤشر الإعادة بـ UTC">
+          <span class="clock-box__label">توقيت المؤشر</span>
+          <bdi id="exchange-clock" class="num clock-box__value" dir="ltr">—</bdi>
+        </div>
+        <span id="app-state-pill" class="state-pill state-pill--idle" role="status" aria-live="polite">
+          <span class="state-pill__dot" aria-hidden="true"></span>
+          <span id="app-state-text">في الانتظار</span>
+        </span>
+      </div>
+
+      <div class="top-bar__group account-group">
+        <div class="metric-pill">
+          <span class="metric-pill__label">الجلسة</span>
+          <bdi id="session-name" class="num metric-pill__value" dir="ltr">—</bdi>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-pill__label">الرصيد</span>
+          <bdi id="account-balance" class="num metric-pill__value" dir="ltr">—</bdi>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-pill__label">السيولة</span>
+          <bdi id="account-equity" class="num metric-pill__value" dir="ltr">—</bdi>
+        </div>
+        <button type="button" id="btn-top-save" class="btn btn--primary btn--sm" title="حفظ الجلسة (Ctrl+S)">
+          <span>حفظ</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace: Side Panel + Chart Area -->
+    <main class="workspace">
+      <!-- Region 3: Side Panel (Tabs) -->
+      <aside class="side-panel" aria-label="لوحة التحكم والتداول">
+        <div class="panel-tabs" role="tablist" aria-label="تبويبات اللوحة الجانبية">
+          <button type="button" role="tab" id="tab-btn-orders" class="panel-tab is-active" aria-selected="true" aria-controls="tab-panel-orders" data-tab="orders">
+            الأوامر
+            <span id="position-indicator-dot" class="tab-dot" hidden></span>
+          </button>
+          <button type="button" role="tab" id="tab-btn-trades" class="panel-tab" aria-selected="false" aria-controls="tab-panel-trades" data-tab="trades">
+            الصفقات
+            <bdi id="trades-count-badge" class="num tab-badge" dir="ltr">0</bdi>
+          </button>
+          <button type="button" role="tab" id="tab-btn-session" class="panel-tab" aria-selected="false" aria-controls="tab-panel-session" data-tab="session">
+            الجلسة
+          </button>
+        </div>
+
+        <!-- Tab 1: الأوامر (Order Ticket + Open Position) -->
+        <section id="tab-panel-orders" class="panel-body is-active" role="tabpanel" aria-labelledby="tab-btn-orders">
+          <div class="card">
+            <div class="card__header">
+              <h2 class="card__title">تذكرة أمر السوق</h2>
+              <span class="card__hint">تنفيذ فوري عند المؤشر</span>
+            </div>
+
+            <div class="form-field">
+              <label class="form-label" for="order-lots">حجم العقد (Lots)</label>
+              <div class="input-with-chips">
+                <input type="number" id="order-lots" class="form-input num-input" dir="ltr" min="0.01" max="100" step="0.01" value="0.10" inputmode="decimal">
+                <div class="quick-chips" role="group" aria-label="أحجام سريعة">
+                  <button type="button" class="chip-btn" data-lot="0.01"><bdi class="num" dir="ltr">0.01</bdi></button>
+                  <button type="button" class="chip-btn" data-lot="0.05"><bdi class="num" dir="ltr">0.05</bdi></button>
+                  <button type="button" class="chip-btn is-selected" data-lot="0.10"><bdi class="num" dir="ltr">0.10</bdi></button>
+                  <button type="button" class="chip-btn" data-lot="0.50"><bdi class="num" dir="ltr">0.50</bdi></button>
+                  <button type="button" class="chip-btn" data-lot="1.00"><bdi class="num" dir="ltr">1.00</bdi></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-grid-2">
+              <div class="form-field">
+                <div class="form-label-row">
+                  <label class="form-label" for="order-sl">وقف الخسارة (<bdi class="num" dir="ltr">SL</bdi>)</label>
+                  <button type="button" class="link-btn" data-clear-input="order-sl" title="مسح وقف الخسارة">مسح</button>
+                </div>
+                <div class="input-action-row">
+                  <input type="number" id="order-sl" class="form-input num-input" dir="ltr" step="0.00001" min="0.00001" placeholder="اختياري" inputmode="decimal">
+                  <button type="button" id="btn-fill-sl" class="chip-btn" title="تعبئة بسعر المؤشر الحالي">الحالي</button>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <div class="form-label-row">
+                  <label class="form-label" for="order-tp">جني الأرباح (<bdi class="num" dir="ltr">TP</bdi>)</label>
+                  <button type="button" class="link-btn" data-clear-input="order-tp" title="مسح جني الأرباح">مسح</button>
+                </div>
+                <div class="input-action-row">
+                  <input type="number" id="order-tp" class="form-input num-input" dir="ltr" step="0.00001" min="0.00001" placeholder="اختياري" inputmode="decimal">
+                  <button type="button" id="btn-fill-tp" class="chip-btn" title="تعبئة بسعر المؤشر الحالي">الحالي</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="order-buttons">
+              <button type="button" id="btn-buy" class="trade-btn trade-btn--buy">
+                <span class="trade-btn__top">
+                  <span class="trade-btn__side">شراء بالسوق</span>
+                  <kbd class="kbd-hint" dir="ltr">B</kbd>
+                </span>
+                <bdi id="btn-buy-price" class="num trade-btn__price" dir="ltr">—</bdi>
+              </button>
+
+              <button type="button" id="btn-sell" class="trade-btn trade-btn--sell">
+                <span class="trade-btn__top">
+                  <span class="trade-btn__side">بيع بالسوق</span>
+                  <kbd class="kbd-hint" dir="ltr">S</kbd>
+                </span>
+                <bdi id="btn-sell-price" class="num trade-btn__price" dir="ltr">—</bdi>
+              </button>
+            </div>
+          </div>
+
+          <!-- Open Position Card -->
+          <div class="card">
+            <div class="card__header">
+              <h2 class="card__title">المركز المفتوح</h2>
+              <span id="open-pos-badge" class="pos-badge pos-badge--flat">بدون مركز</span>
+            </div>
+
+            <div id="open-pos-empty" class="empty-box">
+              لا يوجد مركز مفتوح حالياً. يمكنك فتح صفقة شراء أو بيع عند سعر المؤشر الحالي.
+            </div>
+
+            <div id="open-pos-details" class="pos-details" hidden>
+              <div class="kv-grid">
+                <div class="kv-item">
+                  <span class="kv-item__label">رقم الأمر</span>
+                  <bdi id="pos-order-id" class="num kv-item__value" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">الحجم المفتوح</span>
+                  <bdi id="pos-lots" class="num kv-item__value" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">سعر الدخول</span>
+                  <bdi id="pos-entry" class="num kv-item__value" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">توقيت الدخول</span>
+                  <bdi id="pos-ts" class="num kv-item__value kv-item__value--sm" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">وقف الخسارة (<bdi class="num" dir="ltr">SL</bdi>)</span>
+                  <bdi id="pos-sl" class="num kv-item__value kv-item__value--sl" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">جني الأرباح (<bdi class="num" dir="ltr">TP</bdi>)</span>
+                  <bdi id="pos-tp" class="num kv-item__value kv-item__value--tp" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">الرصيد الحالي</span>
+                  <bdi id="pos-balance" class="num kv-item__value" dir="ltr">—</bdi>
+                </div>
+                <div class="kv-item">
+                  <span class="kv-item__label">السيولة الحالية</span>
+                  <bdi id="pos-equity" class="num kv-item__value" dir="ltr">—</bdi>
+                </div>
+              </div>
+
+              <div class="close-controls">
+                <span class="form-label">إغلاق سريع أو جزئي</span>
+                <div class="close-pct-row">
+                  <button type="button" class="btn btn--ghost btn--xs" data-close-pct="0.25">إغلاق <bdi class="num" dir="ltr">25%</bdi></button>
+                  <button type="button" class="btn btn--ghost btn--xs" data-close-pct="0.50">إغلاق <bdi class="num" dir="ltr">50%</bdi></button>
+                  <button type="button" class="btn btn--ghost btn--xs" data-close-pct="0.75">إغلاق <bdi class="num" dir="ltr">75%</bdi></button>
+                </div>
+                <div class="partial-custom-row">
+                  <input type="number" id="close-lots-input" class="form-input num-input" dir="ltr" min="0.01" step="0.01" placeholder="حجم الإغلاق" inputmode="decimal">
+                  <button type="button" id="btn-close-partial" class="btn btn--secondary btn--sm">إغلاق جزئي</button>
+                </div>
+                <button type="button" id="btn-close-full" class="btn btn--danger btn--block">
+                  <span>إغلاق المركز بالكامل</span>
+                  <kbd class="kbd-hint" dir="ltr">C</kbd>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 2: الصفقات (Closed Trades + Stats) -->
+        <section id="tab-panel-trades" class="panel-body" role="tabpanel" aria-labelledby="tab-btn-trades" hidden>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-card__label">الأرباح التراكمية</span>
+              <bdi id="stat-running-pnl" class="num stat-card__value" dir="ltr">0.00</bdi>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card__label">نسبة النجاح</span>
+              <bdi id="stat-win-rate" class="num stat-card__value" dir="ltr">—</bdi>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card__label">التوقع الرياضي</span>
+              <bdi id="stat-expectancy" class="num stat-card__value" dir="ltr">—</bdi>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card__label">عدد الصفقات</span>
+              <bdi id="stat-trade-count" class="num stat-card__value" dir="ltr">0</bdi>
+            </div>
+          </div>
+
+          <div class="card card--grow">
+            <div class="card__header">
+              <h2 class="card__title">سجل الصفقات المغلقة</h2>
+              <span class="card__hint">قيم الربح من الخادم</span>
+            </div>
+
+            <div id="trades-empty" class="empty-box">
+              لا توجد صفقات مغلقة في هذه الجلسة بعد.
+            </div>
+
+            <div id="trades-table-wrap" class="trades-table-wrap" hidden>
+              <table class="trades-table">
+                <thead>
+                  <tr>
+                    <th>الأمر</th>
+                    <th>الحجم</th>
+                    <th>الدخول / الخروج</th>
+                    <th>السبب</th>
+                    <th>الربح</th>
+                    <th>التراكمي</th>
+                  </tr>
+                </thead>
+                <tbody id="trades-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 3: الجلسة (Save / Load / Seek / New Session) -->
+        <section id="tab-panel-session" class="panel-body" role="tabpanel" aria-labelledby="tab-btn-session" hidden>
+          <div class="card">
+            <div class="card__header">
+              <h2 class="card__title">الجلسة النشطة</h2>
+              <button type="button" id="btn-panel-save" class="btn btn--primary btn--xs">حفظ الجلسة</button>
+            </div>
+            <div class="kv-grid">
+              <div class="kv-item">
+                <span class="kv-item__label">معرّف الجلسة</span>
+                <bdi id="info-session-id" class="num kv-item__value" dir="ltr">—</bdi>
+              </div>
+              <div class="kv-item">
+                <span class="kv-item__label">الإطار الزمني</span>
+                <bdi id="info-session-tf" class="num kv-item__value" dir="ltr">—</bdi>
+              </div>
+              <div class="kv-item kv-item--full">
+                <span class="kv-item__label">نطاق البيانات المتاح (<bdi class="num" dir="ltr">UTC</bdi>)</span>
+                <bdi id="info-data-range" class="num kv-item__value kv-item__value--sm" dir="ltr">—</bdi>
+              </div>
+              <div class="kv-item kv-item--full">
+                <span class="kv-item__label">الشموع المحمّلة حتى المؤشر</span>
+                <bdi id="info-bars-loaded" class="num kv-item__value kv-item__value--sm" dir="ltr">0</bdi>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card__header">
+              <h2 class="card__title">الانتقال الزمني (Seek)</h2>
+              <span class="card__hint">توقيت <bdi class="num" dir="ltr">UTC</bdi></span>
+            </div>
+            <p class="card__note">
+              الرجوع للخلف متاح دائماً ويعيد بناء نافذة الشموع من المؤشر الجديد. أي مركز مفتوح يُغلق تلقائياً بسعر السوق قبل الانتقال.
+            </p>
+            <div class="form-field">
+              <label class="form-label" for="panel-seek-input">التاريخ والوقت (<bdi class="num" dir="ltr">UTC</bdi>)</label>
+              <div class="seek-inline-row">
+                <input type="datetime-local" id="panel-seek-input" class="form-input num-input" dir="ltr" step="60">
+                <button type="button" id="btn-panel-seek" class="btn btn--secondary btn--sm">اذهب إلى</button>
+              </div>
+            </div>
+            <div class="quick-chips">
+              <button type="button" class="chip-btn" data-seek-offset-days="-1">رجوع يوم</button>
+              <button type="button" class="chip-btn" data-seek-offset-days="-7">رجوع <bdi class="num" dir="ltr">7</bdi> أيام</button>
+              <button type="button" class="chip-btn" data-seek-offset-days="-30">رجوع <bdi class="num" dir="ltr">30</bdi> يوماً</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card__header">
+              <h2 class="card__title">بدء جلسة جديدة</h2>
+            </div>
+            <div class="form-grid-2">
+              <div class="form-field">
+                <label class="form-label" for="new-session-tf">الإطار الزمني</label>
+                <select id="new-session-tf" class="form-input num-input" dir="ltr">
+                  <option value="M1">M1</option>
+                  <option value="M5" selected>M5</option>
+                  <option value="M15">M15</option>
+                  <option value="H1">H1</option>
+                  <option value="H4">H4</option>
+                  <option value="D1">D1</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <div class="form-label-row">
+                  <label class="form-label" for="new-session-start">نقطة البداية (<bdi class="num" dir="ltr">UTC</bdi>)</label>
+                  <button type="button" class="link-btn" data-clear-input="new-session-start">آخر شمعة</button>
+                </div>
+                <input type="datetime-local" id="new-session-start" class="form-input num-input" dir="ltr" step="60">
+              </div>
+            </div>
+            <button type="button" id="btn-new-session" class="btn btn--secondary btn--block">إنشاء جلسة جديدة</button>
+          </div>
+
+          <div class="card card--grow">
+            <div class="card__header">
+              <h2 class="card__title">الجلسات المحفوظة</h2>
+              <button type="button" id="btn-refresh-sessions" class="btn btn--ghost btn--xs">تحديث</button>
+            </div>
+            <div id="saved-sessions-empty" class="empty-box">
+              لا توجد جلسات محفوظة بعد. اضغط «حفظ» لحفظ الجلسة الحالية.
+            </div>
+            <ul id="saved-sessions-list" class="sessions-list" hidden></ul>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Region 2: Chart Area + Replay Controls -->
+      <section class="chart-area" aria-label="منطقة الرسم البياني وإعادة التشغيل">
+        <div class="chart-stage">
+          <!-- OHLCV + Bid/Ask Readout Overlay -->
+          <div class="chart-hud" aria-live="off">
+            <div class="chart-hud__row">
+              <span class="hud-pair"><bdi id="hud-symbol" class="num" dir="ltr">EURUSD</bdi> · <bdi id="hud-tf" class="num" dir="ltr">M5</bdi></span>
+              <bdi id="hud-time" class="num hud-time" dir="ltr">—</bdi>
+            </div>
+            <div class="chart-hud__ohlc">
+              <span class="hud-kv"><span class="hud-kv__k">فتح</span><bdi id="hud-o" class="num" dir="ltr">—</bdi></span>
+              <span class="hud-kv"><span class="hud-kv__k">أعلى</span><bdi id="hud-h" class="num" dir="ltr">—</bdi></span>
+              <span class="hud-kv"><span class="hud-kv__k">أدنى</span><bdi id="hud-l" class="num" dir="ltr">—</bdi></span>
+              <span class="hud-kv"><span class="hud-kv__k">إغلاق</span><bdi id="hud-c" class="num" dir="ltr">—</bdi></span>
+              <span class="hud-kv"><span class="hud-kv__k">حجم</span><bdi id="hud-v" class="num" dir="ltr">—</bdi></span>
+            </div>
+          </div>
+
+          <!-- Lightweight Charts v4 Mount (dir="ltr" prevents table column inversion while UI stays RTL) -->
+          <div id="chart-mount" class="chart-mount" dir="ltr"></div>
+
+          <!-- Loading State Indicator -->
+          <div id="loading-overlay" class="stage-overlay stage-overlay--loading" hidden>
+            <div class="spinner" aria-hidden="true"></div>
+            <span id="loading-text" class="stage-overlay__label">جارٍ تحميل بيانات الجلسة…</span>
+          </div>
+
+          <!-- At-End Banner -->
+          <div id="at-end-banner" class="at-end-banner" role="status" hidden>
+            <span class="at-end-banner__dot" aria-hidden="true"></span>
+            <span>وصل المؤشر إلى نهاية البيانات المتاحة — لا توجد شموع إضافية بعد هذه النقطة.</span>
+            <button type="button" id="btn-at-end-rewind" class="btn btn--ghost btn--xs">العودة للبداية <bdi class="num" dir="ltr">⟲</bdi></button>
+          </div>
+
+          <!-- Error State Overlay (never shows frozen candles silently) -->
+          <div id="error-overlay" class="stage-overlay stage-overlay--error" role="alert" hidden>
+            <div class="error-card">
+              <div class="error-card__header">
+                <span class="error-card__icon" aria-hidden="true">!</span>
+                <h2 id="error-title" class="error-card__title">تعذّر الاتصال بخادم الإعادة</h2>
+              </div>
+              <p id="error-message" class="error-card__msg">
+                حدث خطأ أثناء التواصل مع الخادم المحلي. تم إيقاف عرض الشموع مؤقتاً لمنع ظهور بيانات متجمدة أو غير متزامنة.
+              </p>
+              <bdi id="error-detail" class="num error-card__detail" dir="ltr"></bdi>
+              <div class="error-card__actions">
+                <button type="button" id="btn-error-retry" class="btn btn--primary">إعادة المحاولة</button>
+                <button type="button" id="btn-error-resync" class="btn btn--secondary" hidden>مزامنة الجلسة</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Toast Notifications -->
+          <div id="toast-area" class="toast-area" aria-live="polite"></div>
+        </div>
+
+        <!-- Replay Controls (bottom-left, RTL aware) -->
+        <footer class="replay-bar" aria-label="عناصر التحكم في الإعادة">
+          <div class="replay-bar__shortcuts">
+            <span><kbd dir="ltr">Space</kbd> تشغيل/إيقاف</span>
+            <span><kbd dir="ltr">→</kbd> خطوة للأمام</span>
+            <span><kbd dir="ltr">←</kbd> رجوع بالعرض</span>
+            <span><kbd dir="ltr">B</kbd>/<kbd dir="ltr">S</kbd> شراء/بيع</span>
+            <span><kbd dir="ltr">C</kbd> إغلاق</span>
+            <span><kbd dir="ltr">Ctrl+S</kbd> حفظ</span>
+          </div>
+
+          <div class="replay-bar__controls">
+            <div class="replay-seek-group">
+              <label class="sr-only" for="replay-seek-input">انتقال إلى تاريخ ووقت UTC</label>
+              <input type="datetime-local" id="replay-seek-input" class="form-input form-input--compact num-input" dir="ltr" step="60" title="التاريخ والوقت بـ UTC">
+              <button type="button" id="btn-replay-seek" class="btn btn--secondary btn--sm">اذهب إلى</button>
+            </div>
+
+            <div id="speed-pills" class="speed-pills" role="group" aria-label="سرعة الإعادة">
+              <button type="button" class="speed-pill is-active" data-speed="1"><bdi class="num" dir="ltr">1×</bdi></button>
+              <button type="button" class="speed-pill" data-speed="2"><bdi class="num" dir="ltr">2×</bdi></button>
+              <button type="button" class="speed-pill" data-speed="5"><bdi class="num" dir="ltr">5×</bdi></button>
+              <button type="button" class="speed-pill" data-speed="10"><bdi class="num" dir="ltr">10×</bdi></button>
+              <button type="button" class="speed-pill" data-speed="50"><bdi class="num" dir="ltr">50×</bdi></button>
+            </div>
+
+            <div class="transport-group" role="group" aria-label="أزرار النقل">
+              <button type="button" id="btn-snap-cursor" class="transport-btn transport-btn--snap" title="العودة إلى موقع المؤشر الحالي" hidden>
+                <span>المؤشر</span>
+              </button>
+              <button type="button" id="btn-rewind" class="transport-btn" title="العودة إلى بداية الجلسة">
+                <bdi class="num" dir="ltr">⟲</bdi>
+              </button>
+              <button type="button" id="btn-view-back" class="transport-btn" title="رجوع شمعة في العرض فقط (←)">
+                <bdi class="num" dir="ltr">←</bdi>
+              </button>
+              <button type="button" id="btn-step-forward" class="transport-btn" title="خطوة شمعة واحدة للأمام (→)">
+                <bdi class="num" dir="ltr">+1</bdi>
+              </button>
+              <button type="button" id="btn-play-pause" class="transport-btn transport-btn--play" title="تشغيل / إيقاف مؤقت (Space)" aria-label="تشغيل أو إيقاف مؤقت">
+                <bdi id="play-pause-icon" class="num" dir="ltr">▶</bdi>
+              </button>
+            </div>
+          </div>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <script src="./vendor/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
