@@ -367,68 +367,274 @@
 
       <!-- Region 2: Chart Area + Replay Controls -->
       <section class="chart-area" aria-label="منطقة الرسم البياني وإعادة التشغيل">
-        <div class="chart-stage">
-          <!-- OHLCV + Bid/Ask Readout Overlay -->
-          <div class="chart-hud" aria-live="off">
-            <div class="chart-hud__row">
-              <span class="hud-pair"><bdi id="hud-symbol" class="num" dir="ltr">EURUSD</bdi> · <bdi id="hud-tf" class="num" dir="ltr">M5</bdi></span>
-              <bdi id="hud-time" class="num hud-time" dir="ltr">—</bdi>
+        <div class="chart-workspace-row">
+          <!-- Professional Vertical Drawing Toolbar Rail (0px overlap on >=1024px) -->
+          <aside id="drawing-toolbar" class="drawing-toolbar" aria-label="أدوات الرسم والتحليل" role="toolbar" aria-orientation="vertical">
+            <div class="drawing-toolbar__group">
+              <button type="button" class="drawing-btn is-active" data-tool="cursor" aria-pressed="true" aria-label="أداة المؤشر والتحديد (Esc)" title="المؤشر والتحديد (Esc)" tabindex="0">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5.5 3.5l12 10.5-5.2.8 3.1 5.4-2.3 1.3-3.1-5.5-4.5 3.7V3.5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">المؤشر والتحديد <kbd dir="ltr">Esc</kbd></span>
+              </button>
             </div>
-            <div class="chart-hud__ohlc">
-              <span class="hud-kv"><span class="hud-kv__k">فتح</span><bdi id="hud-o" class="num" dir="ltr">—</bdi></span>
-              <span class="hud-kv"><span class="hud-kv__k">أعلى</span><bdi id="hud-h" class="num" dir="ltr">—</bdi></span>
-              <span class="hud-kv"><span class="hud-kv__k">أدنى</span><bdi id="hud-l" class="num" dir="ltr">—</bdi></span>
-              <span class="hud-kv"><span class="hud-kv__k">إغلاق</span><bdi id="hud-c" class="num" dir="ltr">—</bdi></span>
-              <span class="hud-kv"><span class="hud-kv__k">حجم</span><bdi id="hud-v" class="num" dir="ltr">—</bdi></span>
+
+            <div class="drawing-toolbar__divider" aria-hidden="true"></div>
+
+            <div class="drawing-toolbar__group">
+              <button type="button" class="drawing-btn" data-tool="trend-line" aria-pressed="false" aria-label="خط اتجاه (T)" title="خط اتجاه (T)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 19L19 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <circle cx="5" cy="19" r="2.2" fill="currentColor"/>
+                  <circle cx="19" cy="5" r="2.2" fill="currentColor"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">خط اتجاه <kbd dir="ltr">T</kbd></span>
+              </button>
+
+              <button type="button" class="drawing-btn" data-tool="horizontal-line" aria-pressed="false" aria-label="خط أفقي على السعر (H)" title="خط أفقي (H)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <circle cx="12" cy="12" r="2.3" fill="currentColor"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">خط أفقي <kbd dir="ltr">H</kbd></span>
+              </button>
+
+              <button type="button" class="drawing-btn" data-tool="vertical-line" aria-pressed="false" aria-label="خط عمودي على الزمن (V)" title="خط عمودي (V)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3v18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <circle cx="12" cy="12" r="2.3" fill="currentColor"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">خط عمودي <kbd dir="ltr">V</kbd></span>
+              </button>
+
+              <button type="button" class="drawing-btn" data-tool="rectangle" aria-pressed="false" aria-label="منطقة مستطيلة (R)" title="مستطيل / منطقة عرض وطلب (R)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="4.5" y="6.5" width="15" height="11" rx="1.5" stroke="currentColor" stroke-width="1.7" fill="currentColor" fill-opacity="0.15"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">مستطيل / منطقة <kbd dir="ltr">R</kbd></span>
+              </button>
+
+              <button type="button" class="drawing-btn" data-tool="fib" aria-pressed="false" aria-label="مستويات فيبوناتشي (F)" title="تصحيح فيبوناتشي (F)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 6h16M4 10.5h16M4 14.5h16M4 18.5h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <path d="M6 18.5L18 6" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">فيبوناتشي <kbd dir="ltr">F</kbd></span>
+              </button>
             </div>
-          </div>
 
-          <!-- Lightweight Charts v4 Mount (dir="ltr" prevents table column inversion while UI stays RTL) -->
-          <div id="chart-mount" class="chart-mount" dir="ltr"></div>
+            <div class="drawing-toolbar__divider" aria-hidden="true"></div>
 
-          <!-- Loading State Indicator -->
-          <div id="loading-overlay" class="stage-overlay stage-overlay--loading" hidden>
-            <div class="spinner" aria-hidden="true"></div>
-            <span id="loading-text" class="stage-overlay__label">جارٍ تحميل بيانات الجلسة…</span>
-          </div>
+            <div class="drawing-toolbar__group">
+              <button type="button" class="drawing-btn drawing-btn--buy" data-tool="buy-marker" aria-pressed="false" aria-label="علامة شراء (B)" title="علامة شراء (B)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 5l6.5 7.5H14.5V19h-5v-6.5H5.5L12 5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">علامة شراء <kbd dir="ltr">B</kbd></span>
+              </button>
 
-          <!-- At-End Banner -->
-          <div id="at-end-banner" class="at-end-banner" role="status" hidden>
-            <span class="at-end-banner__dot" aria-hidden="true"></span>
-            <span>وصل المؤشر إلى نهاية البيانات المتاحة — لا توجد شموع إضافية بعد هذه النقطة.</span>
-            <button type="button" id="btn-at-end-rewind" class="btn btn--ghost btn--xs">العودة للبداية <bdi class="num" dir="ltr">⟲</bdi></button>
-          </div>
+              <button type="button" class="drawing-btn drawing-btn--sell" data-tool="sell-marker" aria-pressed="false" aria-label="علامة بيع (S)" title="علامة بيع (S)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 19l-6.5-7.5h4V5h5v6.5h4L12 19z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">علامة بيع <kbd dir="ltr">S</kbd></span>
+              </button>
+            </div>
 
-          <!-- Error State Overlay (never shows frozen candles silently) -->
-          <div id="error-overlay" class="stage-overlay stage-overlay--error" role="alert" hidden>
-            <div class="error-card">
-              <div class="error-card__header">
-                <span class="error-card__icon" aria-hidden="true">!</span>
-                <h2 id="error-title" class="error-card__title">تعذّر الاتصال بخادم الإعادة</h2>
+            <div class="drawing-toolbar__divider" aria-hidden="true"></div>
+
+            <div class="drawing-toolbar__group">
+              <button type="button" class="drawing-btn" data-tool="magnet" aria-pressed="false" aria-label="جذب مغناطيسي للشموع OHLC (M)" title="المغناطيس OHLC (M)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M6 5v6a6 6 0 0012 0V5M6 8h3M15 8h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">مغناطيس الشموع <kbd dir="ltr">M</kbd></span>
+              </button>
+
+              <button type="button" id="btn-drawing-settings" class="drawing-btn" aria-expanded="false" aria-controls="drawing-settings-popover" aria-label="إعدادات النمط واللون" title="إعدادات الرسم" tabindex="-1">
+                <span id="drawing-color-swatch-indicator" class="drawing-btn__swatch" style="background:#38bdf8" aria-hidden="true"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <circle cx="9" cy="7" r="2.2" fill="var(--bg-surface)" stroke="currentColor" stroke-width="1.6"/>
+                  <circle cx="15" cy="12" r="2.2" fill="var(--bg-surface)" stroke="currentColor" stroke-width="1.6"/>
+                  <circle cx="10" cy="17" r="2.2" fill="var(--bg-surface)" stroke="currentColor" stroke-width="1.6"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">إعدادات الخط واللون</span>
+              </button>
+            </div>
+
+            <div class="drawing-toolbar__divider" aria-hidden="true"></div>
+
+            <div class="drawing-toolbar__group">
+              <button type="button" id="btn-drawing-undo" class="drawing-btn" aria-label="تراجع عن الرسم (Ctrl+Z)" title="تراجع (Ctrl+Z)" tabindex="-1" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 7L4 12l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 12h10a5 5 0 010 10h-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">تراجع <kbd dir="ltr">Ctrl+Z</kbd></span>
+              </button>
+
+              <button type="button" id="btn-drawing-redo" class="drawing-btn" aria-label="إعادة الرسم (Ctrl+Y)" title="إعادة (Ctrl+Y)" tabindex="-1" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M15 7l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M20 12H10a5 5 0 000 10h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">إعادة <kbd dir="ltr">Ctrl+Y</kbd></span>
+              </button>
+            </div>
+
+            <div class="drawing-toolbar__divider" aria-hidden="true"></div>
+
+            <div class="drawing-toolbar__group">
+              <button type="button" class="drawing-btn drawing-btn--danger" data-tool="eraser" aria-pressed="false" aria-label="الممحاة (E)" title="الممحاة (E)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M16.5 4.5l3 3-9.5 9.5H5.5l-1-1 12-11.5zM4 19.5h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">الممحاة <kbd dir="ltr">E</kbd></span>
+              </button>
+
+              <button type="button" class="drawing-btn drawing-btn--danger" data-tool="clear-all" aria-pressed="false" aria-label="مسح جميع الرسومات (Shift+Del)" title="مسح جميع الرسومات (Shift+Del)" tabindex="-1">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 7h14M9 7V4.5h6V7M7.5 7l.8 12.5h7.4L16.5 7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="drawing-tooltip" role="tooltip">مسح الكل <kbd dir="ltr">Shift+Del</kbd></span>
+              </button>
+            </div>
+
+            <!-- Settings Flyout Popover (preserves #drawing-color, #drawing-width, #drawing-style contract) -->
+            <div id="drawing-settings-popover" class="drawing-popover" role="region" aria-label="إعدادات أدوات الرسم" hidden>
+              <div class="drawing-popover__header">
+                <span class="drawing-popover__title">خصائص الرسم</span>
+                <button type="button" id="btn-close-drawing-popover" class="drawing-popover__close" aria-label="إغلاق إعدادات الرسم">×</button>
               </div>
-              <p id="error-message" class="error-card__msg">
-                حدث خطأ أثناء التواصل مع الخادم المحلي. تم إيقاف عرض الشموع مؤقتاً لمنع ظهور بيانات متجمدة أو غير متزامنة.
-              </p>
-              <bdi id="error-detail" class="num error-card__detail" dir="ltr"></bdi>
-              <div class="error-card__actions">
-                <button type="button" id="btn-error-retry" class="btn btn--primary">إعادة المحاولة</button>
-                <button type="button" id="btn-error-resync" class="btn btn--secondary" hidden>مزامنة الجلسة</button>
+
+              <div class="drawing-toolbar__settings">
+                <div class="drawing-setting-row">
+                  <label class="drawing-setting__label" for="drawing-color">اللون</label>
+                  <div class="drawing-color-controls">
+                    <input type="color" id="drawing-color" class="drawing-color-input" value="#38bdf8">
+                    <div class="drawing-swatches" role="group" aria-label="ألوان سريعة">
+                      <button type="button" class="swatch-dot" data-swatch="#38bdf8" style="background:#38bdf8" aria-label="سماوي"></button>
+                      <button type="button" class="swatch-dot" data-swatch="#10b981" style="background:#10b981" aria-label="أخضر"></button>
+                      <button type="button" class="swatch-dot" data-swatch="#ef4444" style="background:#ef4444" aria-label="أحمر"></button>
+                      <button type="button" class="swatch-dot" data-swatch="#f59e0b" style="background:#f59e0b" aria-label="كهرماني"></button>
+                      <button type="button" class="swatch-dot" data-swatch="#a78bfa" style="background:#a78bfa" aria-label="بنفسجي"></button>
+                      <button type="button" class="swatch-dot" data-swatch="#f8fafc" style="background:#f8fafc" aria-label="أبيض"></button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="drawing-setting-row">
+                  <div class="drawing-setting__top">
+                    <label class="drawing-setting__label" for="drawing-width">سُمك الخط</label>
+                    <bdi id="drawing-width-label" class="num drawing-setting__val" dir="ltr">2px</bdi>
+                  </div>
+                  <input type="range" id="drawing-width" class="drawing-range-input" min="1" max="4" value="2" step="1">
+                </div>
+
+                <div class="drawing-setting-row">
+                  <label class="drawing-setting__label" for="drawing-style">نمط الخط</label>
+                  <select id="drawing-style" class="form-input drawing-style-select">
+                    <option value="solid">مستمر</option>
+                    <option value="dashed">منقط</option>
+                    <option value="dotted">نقاط</option>
+                  </select>
+                </div>
               </div>
             </div>
-          </div>
+          </aside>
 
-          <!-- Toast Notifications -->
-          <div id="toast-area" class="toast-area" aria-live="polite"></div>
+          <div class="chart-stage">
+            <!-- OHLCV + Bid/Ask Readout Overlay -->
+            <div class="chart-hud" aria-live="off">
+              <div class="chart-hud__row">
+                <span class="hud-pair"><bdi id="hud-symbol" class="num" dir="ltr">EURUSD</bdi> · <bdi id="hud-tf" class="num" dir="ltr">M5</bdi></span>
+                <bdi id="hud-time" class="num hud-time" dir="ltr">—</bdi>
+              </div>
+              <div class="chart-hud__ohlc">
+                <span class="hud-kv"><span class="hud-kv__k">فتح</span><bdi id="hud-o" class="num" dir="ltr">—</bdi></span>
+                <span class="hud-kv"><span class="hud-kv__k">أعلى</span><bdi id="hud-h" class="num" dir="ltr">—</bdi></span>
+                <span class="hud-kv"><span class="hud-kv__k">أدنى</span><bdi id="hud-l" class="num" dir="ltr">—</bdi></span>
+                <span class="hud-kv"><span class="hud-kv__k">إغلاق</span><bdi id="hud-c" class="num" dir="ltr">—</bdi></span>
+                <span class="hud-kv"><span class="hud-kv__k">حجم</span><bdi id="hud-v" class="num" dir="ltr">—</bdi></span>
+              </div>
+            </div>
+
+            <!-- Floating Style & Action Bar for Selected Drawing -->
+            <div id="drawing-selection-bar" class="drawing-selection-bar" role="region" aria-label="تحرير الرسم المحدد" hidden>
+              <span id="sel-drawing-type-label" class="drawing-selection-bar__type">رسم محدد</span>
+              <input type="color" id="sel-drawing-color" class="drawing-color-input drawing-color-input--sm" value="#38bdf8" aria-label="لون الرسم المحدد">
+              <select id="sel-drawing-width" class="drawing-mini-select num-input" dir="ltr" aria-label="سُمك الرسم المحدد">
+                <option value="1">1px</option>
+                <option value="2">2px</option>
+                <option value="3">3px</option>
+                <option value="4">4px</option>
+              </select>
+              <select id="sel-drawing-style" class="drawing-mini-select" aria-label="نمط الرسم المحدد">
+                <option value="solid">مستمر</option>
+                <option value="dashed">منقط</option>
+                <option value="dotted">نقاط</option>
+              </select>
+              <button type="button" id="btn-sel-lock" class="drawing-mini-btn" aria-pressed="false" aria-label="قفل أو فتح قفل الرسم" title="قفل / فتح القفل">قفل</button>
+              <button type="button" id="btn-sel-duplicate" class="drawing-mini-btn" aria-label="نسخ الرسم" title="نسخ الرسم">نسخ</button>
+              <button type="button" id="btn-sel-front" class="drawing-mini-btn" aria-label="إحضار للمقدمة" title="إحضار للمقدمة">مقدمة</button>
+              <button type="button" id="btn-sel-delete" class="drawing-mini-btn drawing-mini-btn--danger" aria-label="حذف الرسم المحدد (Del)" title="حذف (Del)">حذف</button>
+            </div>
+
+            <!-- Hover Coordinate Readout Pill for Drawings -->
+            <div id="drawing-hover-pill" class="drawing-hover-pill" dir="ltr" hidden></div>
+
+            <!-- Lightweight Charts v4 Mount (dir="ltr" prevents table column inversion while UI stays RTL) -->
+            <div id="chart-mount" class="chart-mount" dir="ltr"></div>
+
+            <!-- Anchored Drawing Overlay Canvas (strictly inset:0, z-index:5, pointer-events:none) -->
+            <canvas id="drawing-overlay" class="drawing-overlay" aria-hidden="true"></canvas>
+
+            <!-- Loading State Indicator -->
+            <div id="loading-overlay" class="stage-overlay stage-overlay--loading" hidden>
+              <div class="spinner" aria-hidden="true"></div>
+              <span id="loading-text" class="stage-overlay__label">جارٍ تحميل بيانات الجلسة…</span>
+            </div>
+
+            <!-- At-End Banner -->
+            <div id="at-end-banner" class="at-end-banner" role="status" hidden>
+              <span class="at-end-banner__dot" aria-hidden="true"></span>
+              <span>وصل المؤشر إلى نهاية البيانات المتاحة — لا توجد شموع إضافية بعد هذه النقطة.</span>
+              <button type="button" id="btn-at-end-rewind" class="btn btn--ghost btn--xs">العودة للبداية <bdi class="num" dir="ltr">⟲</bdi></button>
+            </div>
+
+            <!-- Error State Overlay (never shows frozen candles silently) -->
+            <div id="error-overlay" class="stage-overlay stage-overlay--error" role="alert" hidden>
+              <div class="error-card">
+                <div class="error-card__header">
+                  <span class="error-card__icon" aria-hidden="true">!</span>
+                  <h2 id="error-title" class="error-card__title">تعذّر الاتصال بخادم الإعادة</h2>
+                </div>
+                <p id="error-message" class="error-card__msg">
+                  حدث خطأ أثناء التواصل مع الخادم المحلي. تم إيقاف عرض الشموع مؤقتاً لمنع ظهور بيانات متجمدة أو غير متزامنة.
+                </p>
+                <bdi id="error-detail" class="num error-card__detail" dir="ltr"></bdi>
+                <div class="error-card__actions">
+                  <button type="button" id="btn-error-retry" class="btn btn--primary">إعادة المحاولة</button>
+                  <button type="button" id="btn-error-resync" class="btn btn--secondary" hidden>مزامنة الجلسة</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Toast Notifications -->
+            <div id="toast-area" class="toast-area" aria-live="polite"></div>
+          </div>
         </div>
 
         <!-- Replay Controls (bottom-left, RTL aware) -->
         <footer class="replay-bar" aria-label="عناصر التحكم في الإعادة">
           <div class="replay-bar__shortcuts">
-            <span><kbd dir="ltr">Space</kbd> تشغيل/إيقاف</span>
-            <span><kbd dir="ltr">→</kbd> خطوة للأمام</span>
-            <span><kbd dir="ltr">←</kbd> رجوع بالعرض</span>
-            <span><kbd dir="ltr">B</kbd>/<kbd dir="ltr">S</kbd> شراء/بيع</span>
-            <span><kbd dir="ltr">C</kbd> إغلاق</span>
+            <span><kbd dir="ltr">Space</kbd> تشغيل</span>
+            <span><kbd dir="ltr">→</kbd>/<kbd dir="ltr">←</kbd> خطوة/عرض</span>
+            <span><kbd dir="ltr">T</kbd>/<kbd dir="ltr">H</kbd>/<kbd dir="ltr">V</kbd>/<kbd dir="ltr">R</kbd> رسم</span>
+            <span><kbd dir="ltr">M</kbd> مغناطيس</span>
+            <span><kbd dir="ltr">Shift+B</kbd>/<kbd dir="ltr">S</kbd> سوق</span>
+            <span><kbd dir="ltr">Ctrl+Z</kbd> تراجع</span>
             <span><kbd dir="ltr">Ctrl+S</kbd> حفظ</span>
           </div>
 

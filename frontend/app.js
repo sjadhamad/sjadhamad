@@ -294,6 +294,30 @@ const dom = {
   btnStepForward: document.getElementById('btn-step-forward'),
   btnPlayPause: document.getElementById('btn-play-pause'),
   playPauseIcon: document.getElementById('play-pause-icon'),
+
+  // Drawing Tools DOM references
+  drawingToolbar: document.getElementById('drawing-toolbar'),
+  drawingOverlay: document.getElementById('drawing-overlay'),
+  btnDrawingSettings: document.getElementById('btn-drawing-settings'),
+  drawingColorSwatchIndicator: document.getElementById('drawing-color-swatch-indicator'),
+  drawingSettingsPopover: document.getElementById('drawing-settings-popover'),
+  btnCloseDrawingPopover: document.getElementById('btn-close-drawing-popover'),
+  drawingColor: document.getElementById('drawing-color'),
+  drawingWidth: document.getElementById('drawing-width'),
+  drawingWidthLabel: document.getElementById('drawing-width-label'),
+  drawingStyle: document.getElementById('drawing-style'),
+  btnDrawingUndo: document.getElementById('btn-drawing-undo'),
+  btnDrawingRedo: document.getElementById('btn-drawing-redo'),
+  drawingSelectionBar: document.getElementById('drawing-selection-bar'),
+  selDrawingTypeLabel: document.getElementById('sel-drawing-type-label'),
+  selDrawingColor: document.getElementById('sel-drawing-color'),
+  selDrawingWidth: document.getElementById('sel-drawing-width'),
+  selDrawingStyle: document.getElementById('sel-drawing-style'),
+  btnSelLock: document.getElementById('btn-sel-lock'),
+  btnSelDuplicate: document.getElementById('btn-sel-duplicate'),
+  btnSelFront: document.getElementById('btn-sel-front'),
+  btnSelDelete: document.getElementById('btn-sel-delete'),
+  drawingHoverPill: document.getElementById('drawing-hover-pill'),
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1371,6 +1395,7 @@ function computeDefaultStartIso(meta) {
 
 async function bootApplication() {
   if (!initChart()) return;
+  initDrawingTools();
   renderSpeedPills();
   setAppState('loading', 'جارٍ الاتصال بخادم الإعادة…');
 
@@ -2195,6 +2220,1858 @@ function bindEvents() {
       closeOpenPosition(null);
     }
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Drawing Tools (Data-Space Anchored Overlay + Native PriceLines)            */
+/* -------------------------------------------------------------------------- */
+
+const DRAWING_MAX_HISTORY = 80;
+const DRAWING_HIT_TOLERANCE_PX = 6;
+const ERASER_HIT_TOLERANCE_PX = 10;
+const HANDLE_HIT_RADIUS_PX = 8;
+const MIN_DRAW_SPAN_PX = 4;
+
+const FIB_LEVELS = Object.freeze([
+  { ratio: 0, label: '0.0%' },
+  { ratio: 0.236, label: '23.6%' },
+  { ratio: 0.382, label: '38.2%' },
+  { ratio: 0.5, label: '50.0%' },
+  { ratio: 0.618, label: '61.8%' },
+  { ratio: 0.786, label: '78.6%' },
+  { ratio: 1, label: '100.0%' },
+]);
+
+const DRAWING_TYPE_LABELS = Object.freeze({
+  trend: 'خط اتجاه',
+  horizontal: 'خط أفقي',
+  vertical: 'خط عمودي',
+  rectangle: 'مستطيل',
+  fib: 'فيبوناتشي',
+  marker: 'علامة سعرية',
+});
+
+const drawingPriceLines = new Map(); // drawing.id -> IPriceLine
+
+const drawingState = {
+  initialized: false,
+  tool: 'cursor', // 'cursor' | 'trend-line' | 'horizontal-line' | 'vertical-line' | 'rectangle' | 'fib' | 'buy-marker' | 'sell-marker' | 'eraser'
+  magnet: false,
+  defaults: {
+    color: '#38bdf8',
+    width: 2,
+    lineStyle: 'solid', // 'solid' | 'dashed' | 'dotted'
+  },
+  items: [], // Data-space only! Zero pixel coordinates ever stored here.
+  selectedId: null,
+  hoveredId: null,
+  eraserCandidateId: null,
+  draft: null, // Active click-drag creation in data space
+  dragEdit: null, // Active move/handle-reshape interaction
+  isPanningChart: false,
+  snapPoint: null, // { time, price } when magnet snaps
+  undoStack: [],
+  redoStack: [],
+  rafId: null,
+  lastViewSig: '',
+  nextSeq: 1,
+  dpr: 1,
+  cssWidth: 0,
+  cssHeight: 0,
+};
+
+function cloneDrawingsList(list) {
+  return list.map((d) => ({
+    ...d,
+    a: d.a ? { time: d.a.time, price: d.a.price } : undefined,
+    b: d.b ? { time: d.b.time, price: d.b.price } : undefined,
+    style: d.style ? { ...d.style } : undefined,
+  }));
+}
+
+function pushDrawingHistorySnapshot() {
+  drawingState.undoStack.push(cloneDrawingsList(drawingState.items));
+  if (drawingState.undoStack.length > DRAWING_MAX_HISTORY) {
+    drawingState.undoStack.shift();
+  }
+  drawingState.redoStack.length = 0;
+  updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+  if (dom.btnDrawingUndo) {
+    dom.btnDrawingUndo.disabled = drawingState.undoStack.length === 0;
+  }
+  if (dom.btnDrawingRedo) {
+    dom.btnDrawingRedo.disabled = drawingState.redoStack.length === 0;
+  }
+}
+
+function undoDrawingAction() {
+  if (drawingState.undoStack.length === 0) return;
+  drawingState.redoStack.push(cloneDrawingsList(drawingState.items));
+  drawingState.items = drawingState.undoStack.pop();
+  if (
+    drawingState.selectedId &&
+    !drawingState.items.some((d) => d.id === drawingState.selectedId)
+  ) {
+    drawingState.selectedId = null;
+  }
+  updateUndoRedoButtons();
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+function redoDrawingAction() {
+  if (drawingState.redoStack.length === 0) return;
+  drawingState.undoStack.push(cloneDrawingsList(drawingState.items));
+  drawingState.items = drawingState.redoStack.pop();
+  if (
+    drawingState.selectedId &&
+    !drawingState.items.some((d) => d.id === drawingState.selectedId)
+  ) {
+    drawingState.selectedId = null;
+  }
+  updateUndoRedoButtons();
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Null-Safe Data <-> Pixel Projection (v4.2.3 APIs Only)                     */
+/* -------------------------------------------------------------------------- */
+
+function getPlotDimensions() {
+  const fullW = dom.chartMount?.clientWidth || 0;
+  const fullH = dom.chartMount?.clientHeight || 0;
+  if (!chart) return { plotW: fullW, plotH: fullH, fullW, fullH };
+
+  const tsW = chart.timeScale().width();
+  const tsH = chart.timeScale().height();
+  const plotW = tsW > 0 && tsW <= fullW ? tsW : fullW;
+  const plotH = tsH > 0 && tsH < fullH ? fullH - tsH : fullH;
+  return { plotW, plotH, fullW, fullH };
+}
+
+function getCursorTimeSec() {
+  if (state.session?.cursor) {
+    const c = isoToUnixSeconds(state.session.cursor);
+    if (Number.isFinite(c)) return c;
+  }
+  if (state.bars.length > 0) {
+    return isoToUnixSeconds(state.bars[state.bars.length - 1].t);
+  }
+  return NaN;
+}
+
+function findLoadedBarIndexAtOrBefore(targetSec) {
+  if (state.bars.length === 0 || !Number.isFinite(targetSec)) return -1;
+  let lo = 0;
+  let hi = state.bars.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const midSec = isoToUnixSeconds(state.bars[mid].t);
+    if (midSec <= targetSec) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/**
+ * Strictly projects a UTC timestamp (seconds) -> CSS X coordinate.
+ * Never returns coordinates past the replay cursor; handles intra-bar M1->M5
+ * timeframe switches without mutating stored `{time, price}` anchors.
+ */
+function timeToX(time) {
+  if (!chart || !Number.isFinite(time) || state.bars.length === 0) return null;
+  const cursorSec = getCursorTimeSec();
+  if (Number.isFinite(cursorSec) && time > cursorSec) {
+    return null; // Never project anything beyond the replay cursor
+  }
+
+  const exactX = chart.timeScale().timeToCoordinate(time);
+  if (exactX !== null && Number.isFinite(Number(exactX))) {
+    return Number(exactX);
+  }
+
+  // Intra-bar anchor projection when viewing on a coarser timeframe (e.g. M1 -> M5):
+  // Only if `time` is within [oldestLoadedBar, cursorSec].
+  const firstSec = isoToUnixSeconds(state.bars[0].t);
+  if (!Number.isFinite(firstSec) || time < firstSec) {
+    return null;
+  }
+  const idx = findLoadedBarIndexAtOrBefore(time);
+  if (idx < 0) return null;
+  const bucketSec = isoToUnixSeconds(state.bars[idx].t);
+  const bucketX = chart.timeScale().timeToCoordinate(bucketSec);
+  return bucketX !== null && Number.isFinite(Number(bucketX)) ? Number(bucketX) : null;
+}
+
+/**
+ * Strictly projects a price -> CSS Y coordinate via v4 candleSeries API.
+ */
+function priceToY(price) {
+  if (!candleSeries || !Number.isFinite(price)) return null;
+  const y = candleSeries.priceToCoordinate(price);
+  return y !== null && Number.isFinite(Number(y)) ? Number(y) : null;
+}
+
+/**
+ * Converts pointer X -> valid loaded bar timestamp (<= cursor).
+ * Never invents timestamps past the cursor gutter.
+ */
+function xToClampedTime(x) {
+  if (!chart || state.bars.length === 0 || !Number.isFinite(x)) return null;
+  const cursorSec = getCursorTimeSec();
+  const rawTime = chart.timeScale().coordinateToTime(x);
+  if (rawTime !== null && Number.isFinite(Number(rawTime))) {
+    const sec = Number(rawTime);
+    return Number.isFinite(cursorSec) && sec > cursorSec ? cursorSec : sec;
+  }
+
+  // Pointer is either in the right cursor gutter or left of bar[0]
+  const lastBarSec = isoToUnixSeconds(state.bars[state.bars.length - 1].t);
+  const firstBarSec = isoToUnixSeconds(state.bars[0].t);
+  const lastX = chart.timeScale().timeToCoordinate(lastBarSec);
+  if (lastX !== null && x >= Number(lastX)) {
+    return lastBarSec;
+  }
+  const firstX = chart.timeScale().timeToCoordinate(firstBarSec);
+  if (firstX !== null && x <= Number(firstX)) {
+    return firstBarSec;
+  }
+  return null;
+}
+
+function yToPrice(y) {
+  if (!candleSeries || !Number.isFinite(y)) return null;
+  const p = candleSeries.coordinateToPrice(y);
+  return p !== null && Number.isFinite(Number(p)) ? Number(Number(p).toFixed(5)) : null;
+}
+
+/**
+ * Resolves pointer `(x, y)` into a data-space `{ time, price }` anchor,
+ * applying OHLC magnet snapping when Magnet mode is active.
+ */
+function resolveAnchorAtPointer(x, y, { useMagnet = drawingState.magnet } = {}) {
+  const time = xToClampedTime(x);
+  const rawPrice = yToPrice(y);
+  if (time === null || rawPrice === null) {
+    return { point: null, snapped: false };
+  }
+
+  if (!useMagnet) {
+    return { point: { time, price: rawPrice }, snapped: false };
+  }
+
+  const bar = state.barsByTime.get(time);
+  if (!bar) {
+    return { point: { time, price: rawPrice }, snapped: false };
+  }
+
+  const candidates = [Number(bar.o), Number(bar.h), Number(bar.l), Number(bar.c)].filter(
+    Number.isFinite
+  );
+  let bestPrice = rawPrice;
+  let bestDist = Infinity;
+
+  for (const cand of candidates) {
+    const cy = priceToY(cand);
+    if (cy === null) continue;
+    const dist = Math.abs(cy - y);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestPrice = Number(cand.toFixed(5));
+    }
+  }
+
+  return {
+    point: { time, price: bestPrice },
+    snapped: bestDist < Infinity,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Native Horizontal PriceLines Sync (`candleSeries.createPriceLine`)         */
+/* -------------------------------------------------------------------------- */
+
+function toLwcLineStyle(styleName) {
+  const LWC = window.LightweightCharts;
+  if (!LWC) return 0;
+  if (styleName === 'dashed') return LWC.LineStyle.Dashed;
+  if (styleName === 'dotted') return LWC.LineStyle.Dotted;
+  return LWC.LineStyle.Solid;
+}
+
+function syncHorizontalDrawingPriceLines() {
+  if (!candleSeries) return;
+
+  const activeHorizontals = new Map();
+  for (const d of drawingState.items) {
+    if (d.type === 'horizontal' && Number.isFinite(d.price)) {
+      activeHorizontals.set(d.id, d);
+    }
+  }
+
+  // Remove stale lines
+  for (const [id, lineObj] of drawingPriceLines.entries()) {
+    if (!activeHorizontals.has(id)) {
+      candleSeries.removePriceLine(lineObj);
+      drawingPriceLines.delete(id);
+    }
+  }
+
+  // Create or update active horizontal lines
+  for (const [id, d] of activeHorizontals.entries()) {
+    const isSelected = drawingState.selectedId === id;
+    const isEraserHover = drawingState.eraserCandidateId === id;
+    const baseColor = d.style?.color || '#38bdf8';
+    const baseWidth = Math.min(4, Math.max(1, Number(d.style?.width) || 2));
+    const opts = {
+      price: d.price,
+      color: isEraserHover ? '#ef4444' : baseColor,
+      lineWidth: isSelected ? Math.min(4, baseWidth + 1) : baseWidth,
+      lineStyle: toLwcLineStyle(d.style?.lineStyle),
+      axisLabelVisible: true,
+      title: d.locked ? 'مقفل' : '',
+    };
+
+    const existing = drawingPriceLines.get(id);
+    if (existing) {
+      existing.applyOptions(opts);
+    } else {
+      const created = candleSeries.createPriceLine(opts);
+      drawingPriceLines.set(id, created);
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Overlay Canvas Sizing, rAF Signature Loop & High-DPR Rendering             */
+/* -------------------------------------------------------------------------- */
+
+function syncOverlayCanvasSize() {
+  const canvas = dom.drawingOverlay;
+  const mount = dom.chartMount;
+  if (!canvas || !mount) return false;
+
+  const cssW = mount.clientWidth;
+  const cssH = mount.clientHeight;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  if (
+    cssW === drawingState.cssWidth &&
+    cssH === drawingState.cssHeight &&
+    dpr === drawingState.dpr
+  ) {
+    return false;
+  }
+
+  drawingState.cssWidth = cssW;
+  drawingState.cssHeight = cssH;
+  drawingState.dpr = dpr;
+
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  canvas.width = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  return true;
+}
+
+function computeOverlayProjectionSignature() {
+  if (!chart || !candleSeries) return 'uninit';
+  const lr = chart.timeScale().getVisibleLogicalRange();
+  const refBar = getCursorBar();
+  const refClose = refBar ? Number(refBar.c) : 1.085;
+  const y1 = candleSeries.priceToCoordinate(refClose);
+  const y2 = candleSeries.priceToCoordinate(refClose + 0.005);
+  const dpr = window.devicePixelRatio || 1;
+  const w = dom.chartMount?.clientWidth || 0;
+  const h = dom.chartMount?.clientHeight || 0;
+  const firstT = state.bars[0]?.t || '';
+  const lastT = refBar?.t || '';
+
+  return [
+    lr ? `${lr.from.toFixed(4)}_${lr.to.toFixed(4)}` : 'nolr',
+    y1 !== null ? Number(y1).toFixed(2) : 'ny1',
+    y2 !== null ? Number(y2).toFixed(2) : 'ny2',
+    `${w}x${h}@${dpr}`,
+    `${firstT}|${lastT}`,
+  ].join('|');
+}
+
+function shouldKeepSyncLoopAlive() {
+  return (
+    drawingState.items.length > 0 ||
+    drawingState.draft !== null ||
+    drawingState.snapPoint !== null
+  );
+}
+
+function ensureOverlaySyncLoop() {
+  if (!shouldKeepSyncLoopAlive()) {
+    if (drawingState.rafId !== null) {
+      window.cancelAnimationFrame(drawingState.rafId);
+      drawingState.rafId = null;
+    }
+    return;
+  }
+  if (drawingState.rafId !== null) return;
+
+  const tick = () => {
+    drawingState.rafId = null;
+    if (!shouldKeepSyncLoopAlive()) return;
+
+    const nextSig = computeOverlayProjectionSignature();
+    if (nextSig !== drawingState.lastViewSig) {
+      drawingState.lastViewSig = nextSig;
+      syncOverlayCanvasSize();
+      redrawOverlay();
+    }
+    drawingState.rafId = window.requestAnimationFrame(tick);
+  };
+
+  drawingState.rafId = window.requestAnimationFrame(tick);
+}
+
+function applyCanvasStrokeStyle(ctx, styleObj, { isSelected = false, isHovered = false, isEraser = false } = {}) {
+  const width = Math.min(4, Math.max(1, Number(styleObj?.width) || 2));
+  const lineStyle = styleObj?.lineStyle || 'solid';
+  ctx.strokeStyle = isEraser ? '#ef4444' : (styleObj?.color || '#38bdf8');
+  ctx.lineWidth = isSelected || isHovered ? Math.min(5, width + 0.75) : width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (lineStyle === 'dashed') {
+    ctx.setLineDash([width * 4, width * 2.5]);
+  } else if (lineStyle === 'dotted') {
+    ctx.setLineDash([width * 1.2, width * 2.2]);
+  } else {
+    ctx.setLineDash([]);
+  }
+}
+
+function hexToRgba(hex, alpha) {
+  if (typeof hex !== 'string') return `rgba(56, 189, 248, ${alpha})`;
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return `rgba(56, 189, 248, ${alpha})`;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+    return `rgba(56, 189, 248, ${alpha})`;
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawHandleNode(ctx, x, y, color, locked = false) {
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = locked ? '#475569' : '#0a0e17';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = locked ? '#94a3b8' : color;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function paintSingleDrawing(ctx, d, plotW, plotH, { isPreview = false } = {}) {
+  const isSelected = !isPreview && drawingState.selectedId === d.id;
+  const isHovered = !isPreview && drawingState.hoveredId === d.id;
+  const isEraser = !isPreview && drawingState.eraserCandidateId === d.id;
+  const color = isEraser ? '#ef4444' : (d.style?.color || '#38bdf8');
+
+  ctx.save();
+
+  if (isSelected || isHovered || isEraser) {
+    ctx.shadowColor = isEraser ? 'rgba(239, 68, 68, 0.55)' : hexToRgba(color, 0.45);
+    ctx.shadowBlur = isSelected ? 8 : 5;
+  }
+
+  if (d.type === 'horizontal') {
+    // Line itself is rendered natively by candleSeries.createPriceLine();
+    // Only draw the handle affordance on the overlay when selected or hovered.
+    if (isSelected || isHovered || isEraser) {
+      const y = priceToY(d.price);
+      if (y !== null && y >= 0 && y <= plotH) {
+        drawHandleNode(ctx, plotW * 0.5, y, color, d.locked);
+      }
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (d.type === 'vertical') {
+    const x = timeToX(d.time);
+    if (x === null) {
+      ctx.restore();
+      return;
+    }
+    applyCanvasStrokeStyle(ctx, d.style, { isSelected, isHovered, isEraser });
+    if (isPreview) ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, plotH);
+    ctx.stroke();
+
+    if (isSelected || isHovered) {
+      drawHandleNode(ctx, x, plotH * 0.5, color, d.locked);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (d.type === 'marker') {
+    const x = timeToX(d.time);
+    const y = priceToY(d.price);
+    if (x === null || y === null) {
+      ctx.restore();
+      return;
+    }
+    const isBuy = d.side === 'buy';
+    const markerColor = isEraser ? '#ef4444' : (d.style?.color || (isBuy ? '#10b981' : '#ef4444'));
+    const dir = isBuy ? 1 : -1;
+
+    ctx.setLineDash([]);
+    ctx.fillStyle = markerColor;
+    ctx.strokeStyle = '#0a0e17';
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    // Crisp directional arrow anchored with tip right at (x, y)
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 7, y + dir * 10);
+    ctx.lineTo(x - 2.8, y + dir * 10);
+    ctx.lineTo(x - 2.8, y + dir * 17);
+    ctx.lineTo(x + 2.8, y + dir * 17);
+    ctx.lineTo(x + 2.8, y + dir * 10);
+    ctx.lineTo(x + 7, y + dir * 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    if (isSelected || isHovered) {
+      drawHandleNode(ctx, x, y, markerColor, d.locked);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (!d.a || !d.b) {
+    ctx.restore();
+    return;
+  }
+
+  const x1 = timeToX(d.a.time);
+  const y1 = priceToY(d.a.price);
+  const x2 = timeToX(d.b.time);
+  const y2 = priceToY(d.b.price);
+
+  // Skip silently if either anchor cannot be projected (never draw at 0,0)
+  if (x1 === null || y1 === null || x2 === null || y2 === null) {
+    ctx.restore();
+    return;
+  }
+
+  if (d.type === 'trend') {
+    applyCanvasStrokeStyle(ctx, d.style, { isSelected, isHovered, isEraser });
+    if (isPreview) ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    if (isSelected || isHovered || isPreview) {
+      drawHandleNode(ctx, x1, y1, color, d.locked);
+      drawHandleNode(ctx, x2, y2, color, d.locked);
+    }
+  } else if (d.type === 'rectangle') {
+    const rx = Math.min(x1, x2);
+    const ry = Math.min(y1, y2);
+    const rw = Math.abs(x2 - x1);
+    const rh = Math.abs(y2 - y1);
+
+    ctx.fillStyle = hexToRgba(color, isSelected ? 0.14 : 0.1);
+    ctx.fillRect(rx, ry, rw, rh);
+
+    applyCanvasStrokeStyle(ctx, d.style, { isSelected, isHovered, isEraser });
+    if (isPreview) ctx.setLineDash([6, 4]);
+    ctx.strokeRect(rx, ry, rw, rh);
+
+    if (isSelected || isHovered || isPreview) {
+      drawHandleNode(ctx, x1, y1, color, d.locked);
+      drawHandleNode(ctx, x2, y1, color, d.locked);
+      drawHandleNode(ctx, x1, y2, color, d.locked);
+      drawHandleNode(ctx, x2, y2, color, d.locked);
+    }
+  } else if (d.type === 'fib') {
+    const leftX = Math.min(x1, x2);
+    const rightX = Math.max(x1, x2);
+    const diffP = d.a.price - d.b.price;
+
+    // Subtle diagonal trend guide
+    ctx.save();
+    ctx.strokeStyle = hexToRgba(color, 0.45);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+
+    applyCanvasStrokeStyle(ctx, d.style, { isSelected, isHovered, isEraser });
+    if (isPreview) ctx.setLineDash([5, 4]);
+
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    ctx.fillStyle = color;
+
+    for (const lvl of FIB_LEVELS) {
+      const lvlPrice = d.b.price + diffP * lvl.ratio;
+      const ly = priceToY(lvlPrice);
+      if (ly === null) continue;
+      ctx.beginPath();
+      ctx.moveTo(leftX, ly);
+      ctx.lineTo(rightX, ly);
+      ctx.stroke();
+
+      if (rightX - leftX >= 48) {
+        ctx.fillText(`${lvl.label} (${lvlPrice.toFixed(5)})`, leftX + 4, ly - 3);
+      }
+    }
+
+    if (isSelected || isHovered || isPreview) {
+      drawHandleNode(ctx, x1, y1, color, d.locked);
+      drawHandleNode(ctx, x2, y2, color, d.locked);
+    }
+  }
+
+  ctx.restore();
+}
+
+function redrawOverlay() {
+  const canvas = dom.drawingOverlay;
+  if (!canvas) return;
+  syncOverlayCanvasSize();
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const dpr = drawingState.dpr || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, drawingState.cssWidth, drawingState.cssHeight);
+
+  const { plotW, plotH } = getPlotDimensions();
+  if (plotW <= 0 || plotH <= 0) return;
+
+  // Clip strictly to the candle plot area so drawings never spill onto axes
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, plotW, plotH);
+  ctx.clip();
+
+  for (const d of drawingState.items) {
+    paintSingleDrawing(ctx, d, plotW, plotH, { isPreview: false });
+  }
+
+  if (drawingState.draft) {
+    paintSingleDrawing(ctx, drawingState.draft, plotW, plotH, { isPreview: true });
+  }
+
+  // Magnet OHLC snap feedback dot
+  if (drawingState.snapPoint) {
+    const sx = timeToX(drawingState.snapPoint.time);
+    const sy = priceToY(drawingState.snapPoint.price);
+    if (sx !== null && sy !== null) {
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  ctx.restore();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Geometry & Hit-Testing (Handles + Stroke/Body)                             */
+/* -------------------------------------------------------------------------- */
+
+function distPointToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function hitTestDrawingHandle(d, x, y) {
+  if (!d || d.locked) return null;
+  const { plotW, plotH } = getPlotDimensions();
+
+  if (d.type === 'horizontal') {
+    const py = priceToY(d.price);
+    if (py !== null && Math.hypot(x - plotW * 0.5, y - py) <= HANDLE_HIT_RADIUS_PX) {
+      return 'price';
+    }
+    return null;
+  }
+
+  if (d.type === 'vertical') {
+    const px = timeToX(d.time);
+    if (px !== null && Math.hypot(x - px, y - plotH * 0.5) <= HANDLE_HIT_RADIUS_PX) {
+      return 'time';
+    }
+    return null;
+  }
+
+  if (d.type === 'marker') {
+    const px = timeToX(d.time);
+    const py = priceToY(d.price);
+    if (px !== null && py !== null && Math.hypot(x - px, y - py) <= HANDLE_HIT_RADIUS_PX + 2) {
+      return 'point';
+    }
+    return null;
+  }
+
+  if (!d.a || !d.b) return null;
+  const x1 = timeToX(d.a.time);
+  const y1 = priceToY(d.a.price);
+  const x2 = timeToX(d.b.time);
+  const y2 = priceToY(d.b.price);
+  if (x1 === null || y1 === null || x2 === null || y2 === null) return null;
+
+  if (d.type === 'rectangle') {
+    const corners = [
+      ['aa', x1, y1],
+      ['ba', x2, y1],
+      ['ab', x1, y2],
+      ['bb', x2, y2],
+    ];
+    for (const [name, cx, cy] of corners) {
+      if (Math.hypot(x - cx, y - cy) <= HANDLE_HIT_RADIUS_PX) return name;
+    }
+    return null;
+  }
+
+  if (Math.hypot(x - x1, y - y1) <= HANDLE_HIT_RADIUS_PX) return 'a';
+  if (Math.hypot(x - x2, y - y2) <= HANDLE_HIT_RADIUS_PX) return 'b';
+  return null;
+}
+
+function computeDistanceToDrawing(d, x, y) {
+  const { plotW, plotH } = getPlotDimensions();
+  if (x < 0 || y < 0 || x > plotW || y > plotH) return Infinity;
+
+  if (d.type === 'horizontal') {
+    const py = priceToY(d.price);
+    return py === null ? Infinity : Math.abs(y - py);
+  }
+
+  if (d.type === 'vertical') {
+    const px = timeToX(d.time);
+    return px === null ? Infinity : Math.abs(x - px);
+  }
+
+  if (d.type === 'marker') {
+    const px = timeToX(d.time);
+    const py = priceToY(d.price);
+    if (px === null || py === null) return Infinity;
+    const centerOffset = d.side === 'buy' ? 8 : -8;
+    return Math.hypot(x - px, y - (py + centerOffset));
+  }
+
+  if (!d.a || !d.b) return Infinity;
+  const x1 = timeToX(d.a.time);
+  const y1 = priceToY(d.a.price);
+  const x2 = timeToX(d.b.time);
+  const y2 = priceToY(d.b.price);
+  if (x1 === null || y1 === null || x2 === null || y2 === null) return Infinity;
+
+  if (d.type === 'trend') {
+    return distPointToSegment(x, y, x1, y1, x2, y2);
+  }
+
+  if (d.type === 'rectangle') {
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    const minY = Math.min(y1, y2);
+    const maxY = Math.max(y1, y2);
+    if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+      return 0; // Inside rectangle
+    }
+    return Math.min(
+      distPointToSegment(x, y, minX, minY, maxX, minY),
+      distPointToSegment(x, y, maxX, minY, maxX, maxY),
+      distPointToSegment(x, y, maxX, maxY, minX, maxY),
+      distPointToSegment(x, y, minX, maxY, minX, minY)
+    );
+  }
+
+  if (d.type === 'fib') {
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    let best = distPointToSegment(x, y, x1, y1, x2, y2);
+    const diffP = d.a.price - d.b.price;
+    for (const lvl of FIB_LEVELS) {
+      const ly = priceToY(d.b.price + diffP * lvl.ratio);
+      if (ly !== null) {
+        best = Math.min(best, distPointToSegment(x, y, minX, ly, maxX, ly));
+      }
+    }
+    return best;
+  }
+
+  return Infinity;
+}
+
+function findTopmostDrawingAt(x, y, tolerancePx, { skipLocked = false } = {}) {
+  let bestDrawing = null;
+  let bestDist = tolerancePx;
+
+  // Iterate topmost-first so z-order ("bring to front") is respected
+  for (let i = drawingState.items.length - 1; i >= 0; i -= 1) {
+    const d = drawingState.items[i];
+    if (skipLocked && d.locked) continue;
+    const dist = computeDistanceToDrawing(d, x, y);
+    if (dist <= bestDist) {
+      bestDist = dist;
+      bestDrawing = d;
+      if (dist === 0) break;
+    }
+  }
+  return bestDrawing;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Toolbar State, Selection Bar, Settings Popover & Cursor Affordance         */
+/* -------------------------------------------------------------------------- */
+
+function getSelectedDrawing() {
+  if (!drawingState.selectedId) return null;
+  return drawingState.items.find((d) => d.id === drawingState.selectedId) || null;
+}
+
+function updateChartCursorAffordance() {
+  if (!dom.chartMount) return;
+  if (drawingState.dragEdit) {
+    dom.chartMount.style.cursor = 'grabbing';
+    return;
+  }
+  if (drawingState.tool === 'eraser') {
+    dom.chartMount.style.cursor = drawingState.eraserCandidateId ? 'pointer' : 'not-allowed';
+    return;
+  }
+  if (drawingState.tool !== 'cursor') {
+    dom.chartMount.style.cursor = 'crosshair';
+    return;
+  }
+  if (drawingState.isPanningChart) {
+    dom.chartMount.style.cursor = 'grabbing';
+    return;
+  }
+  if (drawingState.hoveredId) {
+    const hovered = drawingState.items.find((d) => d.id === drawingState.hoveredId);
+    dom.chartMount.style.cursor = hovered?.locked ? 'default' : 'move';
+    return;
+  }
+  dom.chartMount.style.cursor = 'default';
+}
+
+function syncToolbarAriaStates() {
+  if (!dom.drawingToolbar) return;
+  const toolButtons = dom.drawingToolbar.querySelectorAll('[data-tool]');
+  toolButtons.forEach((btn) => {
+    const t = btn.dataset.tool;
+    if (t === 'magnet') {
+      btn.setAttribute('aria-pressed', String(drawingState.magnet));
+      btn.classList.toggle('is-active', drawingState.magnet);
+    } else if (t === 'clear-all') {
+      btn.setAttribute('aria-pressed', 'false');
+      btn.classList.remove('is-active');
+    } else {
+      const active = drawingState.tool === t;
+      btn.setAttribute('aria-pressed', String(active));
+      btn.classList.toggle('is-active', active);
+    }
+  });
+  updateChartCursorAffordance();
+}
+
+function selectDrawingTool(nextTool) {
+  if (nextTool === 'magnet') {
+    drawingState.magnet = !drawingState.magnet;
+    if (!drawingState.magnet) drawingState.snapPoint = null;
+    syncToolbarAriaStates();
+    ensureOverlaySyncLoop();
+    redrawOverlay();
+    return;
+  }
+
+  if (nextTool === 'clear-all') {
+    clearAllDrawings();
+    return;
+  }
+
+  drawingState.draft = null;
+  drawingState.eraserCandidateId = null;
+  drawingState.tool = nextTool;
+
+  if (nextTool !== 'cursor') {
+    drawingState.selectedId = null;
+    syncHorizontalDrawingPriceLines();
+    renderSelectionToolbar();
+  }
+
+  syncToolbarAriaStates();
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+function renderSelectionToolbar() {
+  const bar = dom.drawingSelectionBar;
+  if (!bar) return;
+
+  const sel = getSelectedDrawing();
+  if (!sel) {
+    bar.hidden = true;
+    return;
+  }
+
+  bar.hidden = false;
+  const label =
+    sel.type === 'marker'
+      ? sel.side === 'buy'
+        ? 'علامة شراء'
+        : 'علامة بيع'
+      : (DRAWING_TYPE_LABELS[sel.type] || 'رسم');
+  dom.selDrawingTypeLabel.textContent = sel.locked ? `${label} (مقفل)` : label;
+
+  const col = sel.style?.color || '#38bdf8';
+  const w = String(sel.style?.width || 2);
+  const st = sel.style?.lineStyle || 'solid';
+
+  dom.selDrawingColor.value = col;
+  dom.selDrawingWidth.value = w;
+  dom.selDrawingStyle.value = st;
+
+  dom.btnSelLock.setAttribute('aria-pressed', String(Boolean(sel.locked)));
+  dom.btnSelLock.textContent = sel.locked ? 'فك القفل' : 'قفل';
+  dom.btnSelDelete.disabled = Boolean(sel.locked);
+}
+
+function applyStyleChange({ color, width, lineStyle }) {
+  if (color !== undefined) {
+    drawingState.defaults.color = color;
+    dom.drawingColor.value = color;
+    if (dom.drawingColorSwatchIndicator) {
+      dom.drawingColorSwatchIndicator.style.background = color;
+    }
+  }
+  if (width !== undefined) {
+    const w = Math.min(4, Math.max(1, Number(width) || 2));
+    drawingState.defaults.width = w;
+    dom.drawingWidth.value = String(w);
+    if (dom.drawingWidthLabel) dom.drawingWidthLabel.textContent = `${w}px`;
+  }
+  if (lineStyle !== undefined) {
+    drawingState.defaults.lineStyle = lineStyle;
+    dom.drawingStyle.value = lineStyle;
+  }
+
+  // TradingView behavior: when a drawing is selected and unlocked, apply to it too
+  const sel = getSelectedDrawing();
+  if (sel && !sel.locked) {
+    pushDrawingHistorySnapshot();
+    sel.style = {
+      color: color ?? sel.style?.color ?? drawingState.defaults.color,
+      width: width !== undefined ? Number(width) : (sel.style?.width ?? drawingState.defaults.width),
+      lineStyle: lineStyle ?? sel.style?.lineStyle ?? drawingState.defaults.lineStyle,
+    };
+    syncHorizontalDrawingPriceLines();
+    renderSelectionToolbar();
+    redrawOverlay();
+  }
+}
+
+function toggleSettingsPopover(forceOpen) {
+  const pop = dom.drawingSettingsPopover;
+  const btn = dom.btnDrawingSettings;
+  if (!pop || !btn) return;
+  const willOpen = forceOpen !== undefined ? Boolean(forceOpen) : pop.hidden;
+  pop.hidden = !willOpen;
+  btn.setAttribute('aria-expanded', String(willOpen));
+}
+
+function renderHoverCoordinatePill(d, pointerX, pointerY) {
+  const pill = dom.drawingHoverPill;
+  if (!pill) return;
+  if (!d || drawingState.draft || drawingState.dragEdit) {
+    pill.hidden = true;
+    return;
+  }
+
+  let label = '';
+  if (d.type === 'horizontal') {
+    label = formatPrice(d.price);
+  } else if (d.type === 'vertical') {
+    label = formatChartUtcSeconds(d.time);
+  } else if (d.type === 'marker') {
+    label = `${d.side === 'buy' ? 'BUY' : 'SELL'} @ ${formatPrice(d.price)}`;
+  } else if (d.a && d.b) {
+    const deltaPips = ((d.b.price - d.a.price) * 10000).toFixed(1);
+    const sign = Number(deltaPips) >= 0 ? '+' : '';
+    label = `${formatPrice(d.a.price)} → ${formatPrice(d.b.price)} (${sign}${deltaPips} pips)`;
+  }
+
+  if (!label) {
+    pill.hidden = true;
+    return;
+  }
+
+  const { plotW, plotH } = getPlotDimensions();
+  pill.textContent = label;
+  pill.hidden = false;
+  const maxLeft = Math.max(8, plotW - (pill.offsetWidth || 180) - 10);
+  const maxTop = Math.max(8, plotH - 32);
+  pill.style.left = `${Math.min(maxLeft, Math.max(8, pointerX + 12))}px`;
+  pill.style.top = `${Math.min(maxTop, Math.max(8, pointerY - 28))}px`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Drawing Mutations: Add, Delete, Clear, Lock, Duplicate, Reorder            */
+/* -------------------------------------------------------------------------- */
+
+function nextDrawingId() {
+  const id = `drw_${drawingState.nextSeq}`;
+  drawingState.nextSeq += 1;
+  return id;
+}
+
+function buildCurrentStyle(overrideColor) {
+  return {
+    color: overrideColor || drawingState.defaults.color,
+    width: drawingState.defaults.width,
+    lineStyle: drawingState.defaults.lineStyle,
+  };
+}
+
+function commitNewDrawing(newItem) {
+  pushDrawingHistorySnapshot();
+  drawingState.items.push(newItem);
+  drawingState.selectedId = newItem.id;
+  drawingState.draft = null;
+  drawingState.tool = 'cursor'; // Return to cursor tool after commit
+  syncToolbarAriaStates();
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+function deleteSelectedDrawing() {
+  const sel = getSelectedDrawing();
+  if (!sel || sel.locked) return;
+  pushDrawingHistorySnapshot();
+  drawingState.items = drawingState.items.filter((d) => d.id !== sel.id);
+  drawingState.selectedId = null;
+  drawingState.hoveredId = null;
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  renderHoverCoordinatePill(null, 0, 0);
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+function clearAllDrawings() {
+  if (drawingState.items.length === 0 && !drawingState.draft) return;
+  pushDrawingHistorySnapshot();
+  drawingState.items = [];
+  drawingState.selectedId = null;
+  drawingState.hoveredId = null;
+  drawingState.eraserCandidateId = null;
+  drawingState.draft = null;
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  renderHoverCoordinatePill(null, 0, 0);
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+function toggleSelectedLock() {
+  const sel = getSelectedDrawing();
+  if (!sel) return;
+  pushDrawingHistorySnapshot();
+  sel.locked = !sel.locked;
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  redrawOverlay();
+}
+
+function bringSelectedToFront() {
+  const sel = getSelectedDrawing();
+  if (!sel) return;
+  const idx = drawingState.items.findIndex((d) => d.id === sel.id);
+  if (idx < 0 || idx === drawingState.items.length - 1) return;
+  pushDrawingHistorySnapshot();
+  drawingState.items.splice(idx, 1);
+  drawingState.items.push(sel);
+  redrawOverlay();
+}
+
+function duplicateSelectedDrawing() {
+  const sel = getSelectedDrawing();
+  if (!sel) return;
+  const priceOffset = 0.0004;
+  const copy = cloneDrawingsList([sel])[0];
+  copy.id = nextDrawingId();
+  copy.locked = false;
+
+  if (copy.type === 'horizontal') {
+    copy.price = Number((copy.price + priceOffset).toFixed(5));
+  } else if (copy.type === 'vertical') {
+    const idx = findLoadedBarIndexAtOrBefore(copy.time);
+    if (idx >= 0 && idx + 2 < state.bars.length) {
+      copy.time = isoToUnixSeconds(state.bars[idx + 2].t);
+    }
+  } else if (copy.type === 'marker') {
+    copy.price = Number((copy.price + priceOffset).toFixed(5));
+  } else if (copy.a && copy.b) {
+    copy.a.price = Number((copy.a.price + priceOffset).toFixed(5));
+    copy.b.price = Number((copy.b.price + priceOffset).toFixed(5));
+  }
+
+  pushDrawingHistorySnapshot();
+  drawingState.items.push(copy);
+  drawingState.selectedId = copy.id;
+  syncHorizontalDrawingPriceLines();
+  renderSelectionToolbar();
+  ensureOverlaySyncLoop();
+  redrawOverlay();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pointer Interaction: Draw, Preview, Select, Move, Reshape & Erase          */
+/* -------------------------------------------------------------------------- */
+
+function getMountRelativeCoords(e) {
+  const rect = dom.chartMount.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
+}
+
+function isTwoPointTool(toolName) {
+  return toolName === 'trend-line' || toolName === 'rectangle' || toolName === 'fib';
+}
+
+function toolToDrawingType(toolName) {
+  if (toolName === 'trend-line') return 'trend';
+  if (toolName === 'rectangle') return 'rectangle';
+  if (toolName === 'fib') return 'fib';
+  return toolName;
+}
+
+function cancelActiveDrawingInteraction() {
+  let changed = false;
+  if (drawingState.draft) {
+    drawingState.draft = null;
+    changed = true;
+  }
+  if (drawingState.dragEdit) {
+    // Revert uncommitted drag
+    drawingState.items = drawingState.dragEdit.beforeItems;
+    drawingState.dragEdit = null;
+    syncHorizontalDrawingPriceLines();
+    changed = true;
+  }
+  if (drawingState.tool !== 'cursor') {
+    drawingState.tool = 'cursor';
+    syncToolbarAriaStates();
+    changed = true;
+  }
+  if (!dom.drawingSettingsPopover.hidden) {
+    toggleSettingsPopover(false);
+    changed = true;
+  }
+  if (drawingState.selectedId) {
+    drawingState.selectedId = null;
+    syncHorizontalDrawingPriceLines();
+    renderSelectionToolbar();
+    changed = true;
+  }
+  if (changed) {
+    ensureOverlaySyncLoop();
+    redrawOverlay();
+  }
+}
+
+function onChartPointerDownCapture(e) {
+  if (!chart || !candleSeries || state.bars.length === 0) return;
+
+  // Close settings popover on chart click
+  if (!dom.drawingSettingsPopover.hidden) {
+    toggleSettingsPopover(false);
+  }
+
+  const { x, y } = getMountRelativeCoords(e);
+  const { plotW, plotH } = getPlotDimensions();
+
+  // Never intercept clicks on the right price axis or bottom time axis
+  if (x < 0 || y < 0 || x >= plotW || y >= plotH) {
+    return;
+  }
+
+  // Right-click cancels active drawing or draw tool without opening context menu
+  if (e.button === 2) {
+    if (drawingState.draft || drawingState.tool !== 'cursor') {
+      e.preventDefault();
+      e.stopPropagation();
+      drawingState.draft = null;
+      drawingState.tool = 'cursor';
+      syncToolbarAriaStates();
+      ensureOverlaySyncLoop();
+      redrawOverlay();
+    }
+    return;
+  }
+
+  if (e.button !== 0) return;
+
+  const tool = drawingState.tool;
+
+  // 1. Eraser tool
+  if (tool === 'eraser') {
+    e.preventDefault();
+    e.stopPropagation();
+    const hit = findTopmostDrawingAt(x, y, ERASER_HIT_TOLERANCE_PX, { skipLocked: true });
+    if (hit) {
+      pushDrawingHistorySnapshot();
+      drawingState.items = drawingState.items.filter((d) => d.id !== hit.id);
+      if (drawingState.selectedId === hit.id) drawingState.selectedId = null;
+      drawingState.eraserCandidateId = null;
+      syncHorizontalDrawingPriceLines();
+      renderSelectionToolbar();
+      ensureOverlaySyncLoop();
+      redrawOverlay();
+    }
+    return;
+  }
+
+  // 2. Single-click tools: horizontal-line, vertical-line, buy-marker, sell-marker
+  if (
+    tool === 'horizontal-line' ||
+    tool === 'vertical-line' ||
+    tool === 'buy-marker' ||
+    tool === 'sell-marker'
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    const { point } = resolveAnchorAtPointer(x, y);
+    if (!point) return;
+
+    if (tool === 'horizontal-line') {
+      commitNewDrawing({
+        id: nextDrawingId(),
+        type: 'horizontal',
+        price: point.price,
+        style: buildCurrentStyle(),
+        locked: false,
+      });
+    } else if (tool === 'vertical-line') {
+      commitNewDrawing({
+        id: nextDrawingId(),
+        type: 'vertical',
+        time: point.time,
+        style: buildCurrentStyle(),
+        locked: false,
+      });
+    } else {
+      const side = tool === 'buy-marker' ? 'buy' : 'sell';
+      commitNewDrawing({
+        id: nextDrawingId(),
+        type: 'marker',
+        time: point.time,
+        price: point.price,
+        side,
+        style: buildCurrentStyle(side === 'buy' ? '#10b981' : '#ef4444'),
+        locked: false,
+      });
+    }
+    return;
+  }
+
+  // 3. Click-drag two-point tools: trend-line, rectangle, fib
+  if (isTwoPointTool(tool)) {
+    e.preventDefault();
+    e.stopPropagation();
+    const { point } = resolveAnchorAtPointer(x, y);
+    if (!point) return;
+
+    drawingState.draft = {
+      id: 'draft_preview',
+      type: toolToDrawingType(tool),
+      a: { time: point.time, price: point.price },
+      b: { time: point.time, price: point.price },
+      startPx: { x, y },
+      style: buildCurrentStyle(),
+      locked: false,
+    };
+    ensureOverlaySyncLoop();
+    redrawOverlay();
+    return;
+  }
+
+  // 4. Cursor mode: check selected drawing's handles first, then hit-test drawings
+  const currentSelected = getSelectedDrawing();
+  if (currentSelected && !currentSelected.locked) {
+    const handle = hitTestDrawingHandle(currentSelected, x, y);
+    if (handle) {
+      e.preventDefault();
+      e.stopPropagation();
+      beginDrawingDragEdit(currentSelected, handle, x, y);
+      return;
+    }
+  }
+
+  const hit = findTopmostDrawingAt(x, y, DRAWING_HIT_TOLERANCE_PX, { skipLocked: false });
+  if (hit) {
+    const prevSel = drawingState.selectedId;
+    drawingState.selectedId = hit.id;
+    if (prevSel !== hit.id) {
+      syncHorizontalDrawingPriceLines();
+      renderSelectionToolbar();
+      redrawOverlay();
+    }
+    if (!hit.locked) {
+      e.preventDefault();
+      e.stopPropagation();
+      const handle = hitTestDrawingHandle(hit, x, y);
+      beginDrawingDragEdit(hit, handle || 'move', x, y);
+    }
+    return;
+  }
+
+  // Clicked empty chart space -> deselect and let Lightweight Charts pan natively
+  if (drawingState.selectedId !== null) {
+    drawingState.selectedId = null;
+    syncHorizontalDrawingPriceLines();
+    renderSelectionToolbar();
+    redrawOverlay();
+  }
+  drawingState.isPanningChart = true;
+  updateChartCursorAffordance();
+}
+
+function beginDrawingDragEdit(targetDrawing, mode, startX, startY) {
+  const startAnchor = resolveAnchorAtPointer(startX, startY, { useMagnet: false }).point;
+  if (!startAnchor) return;
+
+  const startBarIdx = findLoadedBarIndexAtOrBefore(startAnchor.time);
+  const origBarIdxA = targetDrawing.a ? findLoadedBarIndexAtOrBefore(targetDrawing.a.time) : -1;
+  const origBarIdxB = targetDrawing.b ? findLoadedBarIndexAtOrBefore(targetDrawing.b.time) : -1;
+  const origBarIdxSingle =
+    targetDrawing.time !== undefined ? findLoadedBarIndexAtOrBefore(targetDrawing.time) : -1;
+
+  drawingState.dragEdit = {
+    id: targetDrawing.id,
+    mode, // 'move' | 'a' | 'b' | 'aa' | 'ba' | 'ab' | 'bb' | 'price' | 'time' | 'point'
+    beforeItems: cloneDrawingsList(drawingState.items),
+    origDrawing: cloneDrawingsList([targetDrawing])[0],
+    startAnchor,
+    startBarIdx,
+    origBarIdxA,
+    origBarIdxB,
+    origBarIdxSingle,
+    mutated: false,
+  };
+  updateChartCursorAffordance();
+}
+
+function applyDragEditMove(x, y) {
+  const edit = drawingState.dragEdit;
+  if (!edit) return;
+  const target = drawingState.items.find((d) => d.id === edit.id);
+  if (!target || target.locked) return;
+
+  const { point: snappedPt, snapped } = resolveAnchorAtPointer(x, y);
+  const rawPt = resolveAnchorAtPointer(x, y, { useMagnet: false }).point;
+  if (!snappedPt || !rawPt) return;
+
+  drawingState.snapPoint = drawingState.magnet && edit.mode !== 'move' && snapped ? snappedPt : null;
+
+  if (edit.mode === 'price' && target.type === 'horizontal') {
+    target.price = snappedPt.price;
+    edit.mutated = target.price !== edit.origDrawing.price;
+  } else if (edit.mode === 'time' && target.type === 'vertical') {
+    target.time = snappedPt.time;
+    edit.mutated = target.time !== edit.origDrawing.time;
+  } else if ((edit.mode === 'point' || edit.mode === 'move') && target.type === 'marker') {
+    target.time = snappedPt.time;
+    target.price = snappedPt.price;
+    edit.mutated =
+      target.time !== edit.origDrawing.time || target.price !== edit.origDrawing.price;
+  } else if (edit.mode === 'a' && target.a) {
+    target.a = { time: snappedPt.time, price: snappedPt.price };
+    edit.mutated = true;
+  } else if (edit.mode === 'b' && target.b) {
+    target.b = { time: snappedPt.time, price: snappedPt.price };
+    edit.mutated = true;
+  } else if (target.type === 'rectangle' && ['aa', 'ba', 'ab', 'bb'].includes(edit.mode)) {
+    if (edit.mode === 'aa') {
+      target.a.time = snappedPt.time;
+      target.a.price = snappedPt.price;
+    } else if (edit.mode === 'ba') {
+      target.b.time = snappedPt.time;
+      target.a.price = snappedPt.price;
+    } else if (edit.mode === 'ab') {
+      target.a.time = snappedPt.time;
+      target.b.price = snappedPt.price;
+    } else if (edit.mode === 'bb') {
+      target.b.time = snappedPt.time;
+      target.b.price = snappedPt.price;
+    }
+    edit.mutated = true;
+  } else if (edit.mode === 'move') {
+    const deltaPrice = rawPt.price - edit.startAnchor.price;
+    const curBarIdx = findLoadedBarIndexAtOrBefore(rawPt.time);
+    let deltaBars =
+      edit.startBarIdx >= 0 && curBarIdx >= 0 ? curBarIdx - edit.startBarIdx : 0;
+
+    if (target.type === 'horizontal') {
+      target.price = Number((edit.origDrawing.price + deltaPrice).toFixed(5));
+      edit.mutated = target.price !== edit.origDrawing.price;
+    } else if (target.type === 'vertical') {
+      if (edit.origBarIdxSingle >= 0) {
+        const clampedIdx = Math.max(
+          0,
+          Math.min(state.bars.length - 1, edit.origBarIdxSingle + deltaBars)
+        );
+        target.time = isoToUnixSeconds(state.bars[clampedIdx].t);
+        edit.mutated = target.time !== edit.origDrawing.time;
+      }
+    } else if (target.a && target.b) {
+      if (edit.origBarIdxA >= 0 && edit.origBarIdxB >= 0) {
+        const minOrig = Math.min(edit.origBarIdxA, edit.origBarIdxB);
+        const maxOrig = Math.max(edit.origBarIdxA, edit.origBarIdxB);
+        if (minOrig + deltaBars < 0) deltaBars = -minOrig;
+        if (maxOrig + deltaBars > state.bars.length - 1) {
+          deltaBars = state.bars.length - 1 - maxOrig;
+        }
+        target.a.time = isoToUnixSeconds(state.bars[edit.origBarIdxA + deltaBars].t);
+        target.b.time = isoToUnixSeconds(state.bars[edit.origBarIdxB + deltaBars].t);
+      }
+      target.a.price = Number((edit.origDrawing.a.price + deltaPrice).toFixed(5));
+      target.b.price = Number((edit.origDrawing.b.price + deltaPrice).toFixed(5));
+      edit.mutated =
+        deltaBars !== 0 || Math.abs(deltaPrice) >= 0.00001;
+    }
+  }
+
+  syncHorizontalDrawingPriceLines();
+  redrawOverlay();
+}
+
+function onWindowPointerMove(e) {
+  if (!chart || !candleSeries || !dom.chartMount || state.bars.length === 0) return;
+
+  const { x, y } = getMountRelativeCoords(e);
+  const { plotW, plotH } = getPlotDimensions();
+  const insidePlot = x >= 0 && y >= 0 && x < plotW && y < plotH;
+
+  // 1. Active move / reshape drag
+  if (drawingState.dragEdit) {
+    const clampedX = Math.max(0, Math.min(plotW - 1, x));
+    const clampedY = Math.max(0, Math.min(plotH - 1, y));
+    applyDragEditMove(clampedX, clampedY);
+    return;
+  }
+
+  // 2. Active two-point draft preview
+  if (drawingState.draft) {
+    const clampedX = Math.max(0, Math.min(plotW - 1, x));
+    const clampedY = Math.max(0, Math.min(plotH - 1, y));
+    const { point, snapped } = resolveAnchorAtPointer(clampedX, clampedY);
+    if (point) {
+      drawingState.draft.b = { time: point.time, price: point.price };
+      drawingState.snapPoint = drawingState.magnet && snapped ? point : null;
+      redrawOverlay();
+    }
+    return;
+  }
+
+  if (!insidePlot) {
+    if (
+      drawingState.snapPoint ||
+      drawingState.hoveredId ||
+      drawingState.eraserCandidateId
+    ) {
+      drawingState.snapPoint = null;
+      drawingState.hoveredId = null;
+      drawingState.eraserCandidateId = null;
+      syncHorizontalDrawingPriceLines();
+      renderHoverCoordinatePill(null, 0, 0);
+      updateChartCursorAffordance();
+      redrawOverlay();
+    }
+    return;
+  }
+
+  // 3. Magnet hover snap dot while a drawing tool is armed
+  if (drawingState.tool !== 'cursor' && drawingState.tool !== 'eraser') {
+    if (drawingState.magnet) {
+      const { point, snapped } = resolveAnchorAtPointer(x, y);
+      drawingState.snapPoint = snapped ? point : null;
+      ensureOverlaySyncLoop();
+      redrawOverlay();
+    } else if (drawingState.snapPoint) {
+      drawingState.snapPoint = null;
+      redrawOverlay();
+    }
+    renderHoverCoordinatePill(null, 0, 0);
+    return;
+  }
+
+  drawingState.snapPoint = null;
+
+  // 4. Eraser hover candidate highlight
+  if (drawingState.tool === 'eraser') {
+    const cand = findTopmostDrawingAt(x, y, ERASER_HIT_TOLERANCE_PX, { skipLocked: true });
+    const nextCandId = cand ? cand.id : null;
+    if (nextCandId !== drawingState.eraserCandidateId) {
+      drawingState.eraserCandidateId = nextCandId;
+      syncHorizontalDrawingPriceLines();
+      updateChartCursorAffordance();
+      redrawOverlay();
+    }
+    renderHoverCoordinatePill(cand, x, y);
+    return;
+  }
+
+  // 5. Cursor hover highlight & handle cursor feedback
+  if (!drawingState.isPanningChart) {
+    const sel = getSelectedDrawing();
+    const overHandle = sel && !sel.locked ? hitTestDrawingHandle(sel, x, y) : null;
+    if (overHandle) {
+      dom.chartMount.style.cursor = 'crosshair';
+      renderHoverCoordinatePill(sel, x, y);
+      return;
+    }
+
+    const hit = findTopmostDrawingAt(x, y, DRAWING_HIT_TOLERANCE_PX, { skipLocked: false });
+    const nextHoverId = hit ? hit.id : null;
+    if (nextHoverId !== drawingState.hoveredId) {
+      drawingState.hoveredId = nextHoverId;
+      updateChartCursorAffordance();
+      redrawOverlay();
+    }
+    renderHoverCoordinatePill(hit, x, y);
+  }
+}
+
+function onWindowPointerUp(e) {
+  if (drawingState.isPanningChart) {
+    drawingState.isPanningChart = false;
+    updateChartCursorAffordance();
+  }
+
+  if (drawingState.dragEdit) {
+    const edit = drawingState.dragEdit;
+    drawingState.dragEdit = null;
+    drawingState.snapPoint = null;
+    if (edit.mutated) {
+      drawingState.undoStack.push(edit.beforeItems);
+      if (drawingState.undoStack.length > DRAWING_MAX_HISTORY) {
+        drawingState.undoStack.shift();
+      }
+      drawingState.redoStack.length = 0;
+      updateUndoRedoButtons();
+    }
+    updateChartCursorAffordance();
+    ensureOverlaySyncLoop();
+    redrawOverlay();
+    return;
+  }
+
+  if (drawingState.draft && e.button === 0) {
+    const draft = drawingState.draft;
+    const { x, y } = getMountRelativeCoords(e);
+    const { plotW, plotH } = getPlotDimensions();
+    const clampedX = Math.max(0, Math.min(plotW - 1, x));
+    const clampedY = Math.max(0, Math.min(plotH - 1, y));
+    const { point } = resolveAnchorAtPointer(clampedX, clampedY);
+    if (point) {
+      draft.b = { time: point.time, price: point.price };
+    }
+
+    const x1 = timeToX(draft.a.time);
+    const y1 = priceToY(draft.a.price);
+    const x2 = timeToX(draft.b.time);
+    const y2 = priceToY(draft.b.price);
+    const pixelSpan =
+      x1 !== null && y1 !== null && x2 !== null && y2 !== null
+        ? Math.hypot(x2 - x1, y2 - y1)
+        : 0;
+
+    drawingState.snapPoint = null;
+
+    // Minimum-size guard: ignore accidental zero-length clicks
+    if (pixelSpan < MIN_DRAW_SPAN_PX) {
+      drawingState.draft = null;
+      ensureOverlaySyncLoop();
+      redrawOverlay();
+      return;
+    }
+
+    commitNewDrawing({
+      id: nextDrawingId(),
+      type: draft.type,
+      a: { time: draft.a.time, price: draft.a.price },
+      b: { time: draft.b.time, price: draft.b.price },
+      style: { ...draft.style },
+      locked: false,
+    });
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Roving Toolbar Keyboard Focus & Drawing Shortcuts                          */
+/* -------------------------------------------------------------------------- */
+
+function handleToolbarRovingKeydown(e) {
+  const buttons = Array.from(
+    dom.drawingToolbar.querySelectorAll('button.drawing-btn:not(:disabled)')
+  );
+  if (buttons.length === 0) return;
+
+  const currentIdx = buttons.indexOf(document.activeElement);
+  if (currentIdx < 0) return;
+
+  let nextIdx = -1;
+  if (e.key === 'ArrowDown') {
+    nextIdx = (currentIdx + 1) % buttons.length;
+  } else if (e.key === 'ArrowUp') {
+    nextIdx = (currentIdx - 1 + buttons.length) % buttons.length;
+  } else if (e.key === 'Home') {
+    nextIdx = 0;
+  } else if (e.key === 'End') {
+    nextIdx = buttons.length - 1;
+  }
+
+  if (nextIdx >= 0) {
+    e.preventDefault();
+    buttons.forEach((btn, idx) => {
+      btn.tabIndex = idx === nextIdx ? 0 : -1;
+    });
+    buttons[nextIdx].focus();
+  }
+}
+
+function onDrawingKeyDownCapture(e) {
+  if (isEditableElement(e.target)) {
+    if (e.key === 'Escape' && !dom.drawingSettingsPopover.hidden) {
+      e.preventDefault();
+      toggleSettingsPopover(false);
+      dom.btnDrawingSettings?.focus();
+    }
+    return;
+  }
+
+  // Undo / Redo: Ctrl+Z, Ctrl+Y, Cmd+Z, Cmd+Shift+Z, Cmd+Y
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      undoDrawingAction();
+      return;
+    }
+    if (k === 'y' || (k === 'z' && e.shiftKey)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      redoDrawingAction();
+      return;
+    }
+    return;
+  }
+
+  if (e.altKey) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cancelActiveDrawingInteraction();
+    return;
+  }
+
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (e.shiftKey) {
+      e.preventDefault();
+      clearAllDrawings();
+      return;
+    }
+    if (drawingState.selectedId) {
+      e.preventDefault();
+      deleteSelectedDrawing();
+    }
+    return;
+  }
+
+  // Plain single-letter shortcuts select drawing tools (Shift+B / Shift+S pass through for market orders)
+  if (e.shiftKey) return;
+
+  const lower = e.key.toLowerCase();
+  const toolShortcutMap = {
+    t: 'trend-line',
+    h: 'horizontal-line',
+    v: 'vertical-line',
+    r: 'rectangle',
+    f: 'fib',
+    b: 'buy-marker',
+    s: 'sell-marker',
+    m: 'magnet',
+    e: 'eraser',
+  };
+
+  if (Object.prototype.hasOwnProperty.call(toolShortcutMap, lower)) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    selectDrawingTool(toolShortcutMap[lower]);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Single Initialization Entry (`initDrawingTools` — called once after chart) */
+/* -------------------------------------------------------------------------- */
+
+function initDrawingTools() {
+  if (drawingState.initialized || !chart || !candleSeries || !dom.drawingOverlay) {
+    return;
+  }
+  drawingState.initialized = true;
+
+  syncOverlayCanvasSize();
+  syncToolbarAriaStates();
+  updateUndoRedoButtons();
+
+  // 1. Horizontal scroll/zoom & new-bar subscription
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    redrawOverlay();
+  });
+
+  // 2. Resize observer + window resize / DPR changes
+  if (typeof window.ResizeObserver === 'function') {
+    const overlayRo = new window.ResizeObserver(() => {
+      syncOverlayCanvasSize();
+      redrawOverlay();
+    });
+    overlayRo.observe(dom.chartMount);
+  }
+  window.addEventListener('resize', () => {
+    syncOverlayCanvasSize();
+    redrawOverlay();
+  });
+
+  // 3. Toolbar button clicks + roving focus
+  dom.drawingToolbar.addEventListener('click', (e) => {
+    const toolBtn = e.target.closest('[data-tool]');
+    if (toolBtn && !toolBtn.disabled) {
+      selectDrawingTool(toolBtn.dataset.tool);
+      return;
+    }
+  });
+  dom.drawingToolbar.addEventListener('keydown', handleToolbarRovingKeydown);
+
+  // 4. Settings popover open/close & outside click dismissal
+  dom.btnDrawingSettings.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSettingsPopover();
+  });
+  dom.btnCloseDrawingPopover.addEventListener('click', () => {
+    toggleSettingsPopover(false);
+    dom.btnDrawingSettings.focus();
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (
+      !dom.drawingSettingsPopover.hidden &&
+      !dom.drawingSettingsPopover.contains(e.target) &&
+      !dom.btnDrawingSettings.contains(e.target)
+    ) {
+      toggleSettingsPopover(false);
+    }
+  });
+
+  // 5. Global style inputs (#drawing-color, #drawing-width, #drawing-style + swatches)
+  dom.drawingColor.addEventListener('input', () => {
+    applyStyleChange({ color: dom.drawingColor.value });
+  });
+  dom.drawingWidth.addEventListener('input', () => {
+    applyStyleChange({ width: Number(dom.drawingWidth.value) });
+  });
+  dom.drawingStyle.addEventListener('change', () => {
+    applyStyleChange({ lineStyle: dom.drawingStyle.value });
+  });
+  dom.drawingSettingsPopover.querySelectorAll('[data-swatch]').forEach((sw) => {
+    sw.addEventListener('click', () => {
+      applyStyleChange({ color: sw.dataset.swatch });
+    });
+  });
+
+  // 6. Undo / Redo toolbar buttons
+  dom.btnDrawingUndo.addEventListener('click', undoDrawingAction);
+  dom.btnDrawingRedo.addEventListener('click', redoDrawingAction);
+
+  // 7. Floating Selected-Drawing style & action bar
+  dom.selDrawingColor.addEventListener('input', () => {
+    applyStyleChange({ color: dom.selDrawingColor.value });
+  });
+  dom.selDrawingWidth.addEventListener('change', () => {
+    applyStyleChange({ width: Number(dom.selDrawingWidth.value) });
+  });
+  dom.selDrawingStyle.addEventListener('change', () => {
+    applyStyleChange({ lineStyle: dom.selDrawingStyle.value });
+  });
+  dom.btnSelLock.addEventListener('click', toggleSelectedLock);
+  dom.btnSelDuplicate.addEventListener('click', duplicateSelectedDrawing);
+  dom.btnSelFront.addEventListener('click', bringSelectedToFront);
+  dom.btnSelDelete.addEventListener('click', deleteSelectedDrawing);
+
+  // 8. Chart pointer capture & contextmenu suppression while drawing
+  dom.chartMount.addEventListener('pointerdown', onChartPointerDownCapture, true);
+  dom.chartMount.addEventListener(
+    'contextmenu',
+    (e) => {
+      if (drawingState.draft || drawingState.tool !== 'cursor') {
+        e.preventDefault();
+      }
+    },
+    true
+  );
+  window.addEventListener('pointermove', onWindowPointerMove);
+  window.addEventListener('pointerup', onWindowPointerUp);
+
+  // 9. Capture-phase keyboard handler for drawing tools & undo/redo
+  window.addEventListener('keydown', onDrawingKeyDownCapture, true);
 }
 
 /* -------------------------------------------------------------------------- */

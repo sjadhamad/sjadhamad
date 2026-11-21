@@ -973,7 +973,15 @@ body {
   background: var(--bg-canvas);
 }
 
+.chart-workspace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px;
+  min-width: 0;
+  min-height: 0;
+}
+
 .chart-stage {
+  order: 1;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -986,18 +994,27 @@ body {
   transition: opacity 0.18s ease, filter 0.18s ease;
 }
 
+/* Anchored Drawing Overlay Canvas — exact contract hygiene */
+.drawing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
 /* Never leave misleading frozen candles visible when server disconnects */
-body[data-app-state="error"] .chart-mount {
+body[data-app-state="error"] .chart-mount,
+body[data-app-state="error"] .drawing-overlay {
   opacity: 0.16;
   filter: grayscale(0.9) blur(2px);
   pointer-events: none;
 }
 
-/* OHLCV HUD */
+/* OHLCV HUD (physical top-left of plot, clear of right price scale) */
 .chart-hud {
   position: absolute;
   top: 10px;
-  right: 12px;
+  left: 12px;
   z-index: 8;
   pointer-events: none;
   background: rgba(16, 23, 38, 0.84);
@@ -1334,6 +1351,399 @@ body[data-app-state="error"] .chart-mount {
   font-size: 11.5px;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Professional Drawing Tools Rail, Popover, Selection Bar & Tooltips         */
+/* -------------------------------------------------------------------------- */
+
+.drawing-toolbar {
+  order: 2;
+  position: relative;
+  z-index: 18;
+  width: 46px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  padding: 6px 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+
+.drawing-toolbar__group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.drawing-toolbar__divider {
+  width: 24px;
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 2px 0;
+  flex-shrink: 0;
+}
+
+.drawing-btn {
+  position: relative;
+  appearance: none;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.drawing-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.drawing-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.32);
+  color: var(--text-primary);
+}
+
+.drawing-btn[aria-pressed="true"],
+.drawing-btn.is-active {
+  background: var(--accent-soft);
+  border-color: rgba(56, 189, 248, 0.55);
+  color: var(--accent);
+}
+
+.drawing-btn--buy:hover:not(:disabled) {
+  color: #6ee7b7;
+}
+
+.drawing-btn--buy[aria-pressed="true"],
+.drawing-btn--buy.is-active {
+  background: var(--buy-soft);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: var(--buy);
+}
+
+.drawing-btn--sell:hover:not(:disabled) {
+  color: #fca5a5;
+}
+
+.drawing-btn--sell[aria-pressed="true"],
+.drawing-btn--sell.is-active {
+  background: var(--sell-soft);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: var(--sell);
+}
+
+.drawing-btn--danger:hover:not(:disabled) {
+  background: var(--sell-soft);
+  color: #fca5a5;
+}
+
+.drawing-btn--danger[aria-pressed="true"],
+.drawing-btn--danger.is-active {
+  background: var(--sell-soft);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+}
+
+.drawing-btn:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.drawing-btn__swatch {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.65);
+}
+
+/* Accessible Hover + Keyboard Focus Tooltip (opens rightward into plot, away from screen edge) */
+.drawing-tooltip {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 5px 9px;
+  border-radius: var(--radius-xs);
+  background: #0d1424;
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+  z-index: 30;
+}
+
+.drawing-tooltip kbd {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.drawing-btn:hover:not(:disabled) .drawing-tooltip,
+.drawing-btn:focus-visible .drawing-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* Settings Flyout Popover (opens rightward next to rail; never covers price axis or replay bar) */
+.drawing-popover {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 8px;
+  width: 232px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.6);
+  z-index: 28;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawing-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.drawing-popover__title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.drawing-popover__close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.drawing-popover__close:hover,
+.drawing-popover__close:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.drawing-toolbar__settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawing-setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.drawing-setting__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawing-setting__label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.drawing-setting__val {
+  font-size: 11.5px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.drawing-color-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawing-color-input {
+  appearance: none;
+  width: 30px;
+  height: 26px;
+  padding: 1px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  cursor: pointer;
+}
+
+.drawing-color-input--sm {
+  width: 26px;
+  height: 24px;
+}
+
+.drawing-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.swatch-dot {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.1s ease, border-color 0.1s ease;
+}
+
+.swatch-dot:hover,
+.swatch-dot:focus-visible {
+  transform: scale(1.16);
+  border-color: #ffffff;
+  outline: none;
+}
+
+.drawing-range-input {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.drawing-style-select {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+/* Floating Selected-Drawing Toolbar */
+.drawing-selection-bar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  background: rgba(16, 23, 38, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  max-width: calc(100% - 160px);
+  flex-wrap: wrap;
+}
+
+.drawing-selection-bar__type {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+  padding-inline: 4px;
+}
+
+.drawing-mini-select {
+  padding: 3px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.drawing-mini-btn {
+  appearance: none;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.drawing-mini-btn:hover:not(:disabled),
+.drawing-mini-btn:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.drawing-mini-btn[aria-pressed="true"] {
+  background: var(--warn-soft);
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #fde68a;
+}
+
+.drawing-mini-btn--danger:hover:not(:disabled) {
+  background: var(--sell-soft);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fca5a5;
+}
+
+.drawing-mini-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* Optional lightweight DOM hover coordinate pill */
+.drawing-hover-pill {
+  position: absolute;
+  z-index: 11;
+  pointer-events: none;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
+  background: rgba(12, 18, 32, 0.92);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
 /* Responsive fallback for narrower windows */
 @media (max-width: 980px) {
   .app-shell {
@@ -1350,6 +1760,21 @@ body[data-app-state="error"] .chart-mount {
 
   .chart-area {
     order: 1;
+  }
+
+  .chart-workspace-row {
+    grid-template-columns: minmax(0, 1fr) 40px;
+  }
+
+  .drawing-toolbar {
+    width: 40px;
+    padding: 4px 3px;
+    gap: 2px;
+  }
+
+  .drawing-btn {
+    width: 30px;
+    height: 28px;
   }
 
   .side-panel {
